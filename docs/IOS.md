@@ -18,6 +18,11 @@ machine.
    `Always Run Scripts` enabled if the app is not automatically recognized.
 5. Verify `ARM64 JIT result: 42`.
 
+The current probe also has an `Import PS5UPDATE.PUP` button. Select the
+user-provided official PUP from Files; the app reads only the SLB2 header and
+file table and shows the first component names. It does not copy or decrypt
+firmware yet.
+
 SideStore is a valid alternative for signing/installing and JIT activation,
 but it is not required for the first proof.
 

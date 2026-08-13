@@ -1,14 +1,30 @@
 #import <UIKit/UIKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include "core/cpu/arm64_jit.h"
+#include "core/firmware/slb2.h"
 #include "core/cpu/x86_decoder.h"
 
-@interface VSHiftJITViewController : UIViewController
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <vector>
+
+@interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate>
+@property(nonatomic, strong) UILabel *statusLabel;
 @end
 
 @implementation VSHiftJITViewController
-- (void)viewDidAppear:(BOOL)animated {
-    [super viewDidAppear:animated];
+
+static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
+    return static_cast<std::uint32_t>(bytes[0]) |
+           (static_cast<std::uint32_t>(bytes[1]) << 8) |
+           (static_cast<std::uint32_t>(bytes[2]) << 16) |
+           (static_cast<std::uint32_t>(bytes[3]) << 24);
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
 
     constexpr std::uint8_t program[] = {
         0xB8, 0x28, 0x00, 0x00, 0x00,
@@ -32,13 +48,167 @@
     }
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    UILabel *label = [[UILabel alloc] initWithFrame:self.view.bounds];
-    label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    label.textAlignment = NSTextAlignmentCenter;
-    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle2];
-    label.numberOfLines = 0;
-    label.text = message;
-    [self.view addSubview:label];
+
+    UILabel *title = [[UILabel alloc] init];
+    title.translatesAutoresizingMaskIntoConstraints = NO;
+    title.text = @"VSHift firmware probe";
+    title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
+    title.textAlignment = NSTextAlignmentCenter;
+
+    self.statusLabel = [[UILabel alloc] init];
+    self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.statusLabel.text = message;
+    self.statusLabel.textAlignment = NSTextAlignmentCenter;
+    self.statusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    self.statusLabel.numberOfLines = 0;
+
+    UIButton *importButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    importButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [importButton setTitle:@"Import PS5UPDATE.PUP" forState:UIControlStateNormal];
+    importButton.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    [importButton addTarget:self
+                     action:@selector(importFirmware)
+           forControlEvents:UIControlEventTouchUpInside];
+
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        title, self.statusLabel, importButton
+    ]];
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.alignment = UIStackViewAlignmentFill;
+    stack.spacing = 20.0;
+    [self.view addSubview:stack];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor
+                                             constant:24.0],
+        [stack.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor
+                                              constant:-24.0],
+        [stack.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+    ]];
+}
+
+- (void)importFirmware {
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc]
+            initForOpeningContentTypes:@[UTTypeData]
+            asCopy:NO];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller
+ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    (void)controller;
+    NSURL *url = urls.firstObject;
+    if (url == nil) {
+        return;
+    }
+
+    const BOOL accessed = [url startAccessingSecurityScopedResource];
+    NSError *attributesError = nil;
+    NSDictionary *attributes =
+        [[NSFileManager defaultManager] attributesOfItemAtPath:url.path
+                                                          error:&attributesError];
+    NSNumber *fileSizeNumber = attributes[NSFileSize];
+    const auto fileSize = fileSizeNumber != nil
+                              ? fileSizeNumber.unsignedLongLongValue
+                              : 0;
+    if (attributesError != nil || fileSize < vshift::firmware::kSlb2HeaderSize) {
+        self.statusLabel.text = @"Firmware file is too small or unreadable.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    NSFileHandle *handle = [NSFileHandle fileHandleForReadingFromURL:url
+                                                                 error:nil];
+    if (handle == nil) {
+        self.statusLabel.text = @"Could not open firmware file.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+    NSData *headerData = [handle readDataOfLength:vshift::firmware::kSlb2HeaderSize];
+    if (headerData.length < vshift::firmware::kSlb2HeaderSize) {
+        self.statusLabel.text = @"Could not read firmware header.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    const auto *header = static_cast<const std::uint8_t *>(headerData.bytes);
+    if (header[0] != 'S' || header[1] != 'L' || header[2] != 'B' ||
+        header[3] != '2') {
+        self.statusLabel.text = @"This is not a PS5 SLB2 firmware container.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    const auto entryCount = ReadU32LE(header + 0x0C);
+    constexpr std::uint32_t kMaximumEntries = 1'000'000;
+    if (entryCount > kMaximumEntries) {
+        self.statusLabel.text = @"Firmware table entry count is invalid.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    const auto tableSize = vshift::firmware::kSlb2HeaderSize +
+                           static_cast<std::size_t>(entryCount) *
+                               vshift::firmware::kSlb2EntrySize;
+    if (tableSize > fileSize ||
+        tableSize > static_cast<std::size_t>(
+                         std::numeric_limits<NSInteger>::max())) {
+        self.statusLabel.text = @"Firmware file table is invalid.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    [handle seekToFileOffset:0];
+    NSData *tableData = [handle readDataOfLength:tableSize];
+    [handle closeFile];
+    if (accessed) {
+        [url stopAccessingSecurityScopedResource];
+    }
+    if (tableData.length != tableSize) {
+        self.statusLabel.text = @"Could not read firmware file table.";
+        return;
+    }
+
+    const auto *tableBytes = static_cast<const std::uint8_t *>(tableData.bytes);
+    const auto parsed = vshift::firmware::ParseSlb2Table(
+        std::span<const std::uint8_t>(tableBytes, tableData.length), fileSize);
+    if (!parsed.ok()) {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"Firmware parse failed:\n%s", parsed.error.c_str()];
+        return;
+    }
+
+    NSMutableString *summary = [NSMutableString stringWithFormat:
+        @"SLB2 OK\n%d components", parsed.package.entry_count];
+    const std::size_t visibleEntries =
+        std::min<std::size_t>(parsed.package.entries.size(), 8);
+    for (std::size_t index = 0; index < visibleEntries; ++index) {
+        const auto &entry = parsed.package.entries[index];
+        [summary appendFormat:@"\n• %s (%llu bytes)", entry.name.c_str(),
+                              static_cast<unsigned long long>(entry.size)];
+    }
+    if (parsed.package.entries.size() > visibleEntries) {
+        [summary appendFormat:@"\n… and %d more",
+                              static_cast<int>(parsed.package.entries.size() -
+                                               visibleEntries)];
+    }
+    self.statusLabel.text = summary;
 }
 @end
 

@@ -4,8 +4,8 @@ Date: 2026-08-13
 
 ## Current milestone
 
-Milestone 0 complete; Milestone 1 PoC is CI-verified and awaiting physical
-iPhone verification.
+Milestones 0 and 1 are complete: the JIT PoC returned `42` on the user's
+iPhone 15. Milestone 2a now has an on-device SLB2 inspection path.
 
 ## Working
 
@@ -31,13 +31,15 @@ iPhone verification.
   iLoader installs and uses UTM's `BRK #0x69` StikDebug hook on iOS 26/TXM.
 - Added the first real-firmware boundary: a read-only PS5 `SLB2` table parser,
   CLI inspector, and malformed-input tests. No firmware is bundled.
+- The iOS probe now opens a user-selected PUP from Files and displays its first
+  SLB2 component names without copying or decrypting firmware.
 
 ## Not working yet
 
 - No PS5 ELF/SELF loader.
 - No firmware importer or PUP parser.
 - No guest memory subsystem, IR, block cache, HLE, GPU, audio, or input.
-- No signed IPA or device run has been recorded.
+- No firmware component has been extracted or executed yet.
 
 ## Current hypothesis
 
@@ -47,14 +49,13 @@ validate the executable-memory/signing path before larger CPU work starts.
 
 ## Next 5 actions
 
-1. Download the new unsigned device IPA and update the existing installation
-   with iLoader.
-2. Assign StikDebug's `legacy.js` to VSHift, activate JIT, and launch it from
-   StikDebug on the iPhone 15.
-3. Record `ARM64 JIT result: 42` and device logs.
+1. Download the new device IPA and update the existing installation with
+   iLoader.
+2. Use `Import PS5UPDATE.PUP` and record the component list from a real PUP.
+3. Add versioned manifest storage and a read-only firmware filesystem.
 4. Add IR and a guest register/flags model while keeping the firmware parser
    independent from CPU execution.
-5. Add an iOS document picker and persist a firmware manifest.
+5. Add a synthetic PS5 ELF/SELF header fixture and safe program-header parser.
 
 ## Important commands
 

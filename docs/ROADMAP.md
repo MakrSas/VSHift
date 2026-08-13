@@ -10,7 +10,7 @@ claim that the previous one is production-ready.
 - [x] iOS application target
 - [x] GitHub Actions host and iOS-simulator builds
 - [x] architecture, research, licensing, and status documentation
-- [ ] signed device build and first iPhone run
+- [x] signed device build and first iPhone run
 
 ## Milestone 1 — ARM64 JIT proof of concept
 
@@ -19,7 +19,7 @@ claim that the previous one is production-ready.
 - [x] decode `ret`
 - [x] emit AArch64 `mov`, `add`, and `ret`
 - [x] executable-memory abstraction with cache invalidation
-- [ ] run on the user's iPhone 15 and record the result
+- [x] run on the user's iPhone 15 and record the result (`42`)
 
 ## Milestone 2 — Mini x86-64 userspace
 
@@ -32,7 +32,8 @@ start with all of x86-64 or AVX.
 - [x] Parse the PS5 `SLB2` outer container header and file table
 - [x] Validate table bounds and component ranges without loading the whole PUP
 - [x] Add a host inspector and synthetic malformed-input tests
-- [ ] Add an iOS document picker and versioned manifest storage
+- [x] Add an iOS document picker and read the firmware table on-device
+- [ ] Persist a versioned firmware manifest
 
 ## Milestone 3 — PS5 ELF/SELF loader
 

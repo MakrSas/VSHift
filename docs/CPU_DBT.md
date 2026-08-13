@@ -35,6 +35,8 @@ or host instruction encoding.
 writable to executable. The iOS application supplies signing/entitlement
 configuration; core translation code does not include UIKit or iOS headers.
 
-The current implementation uses a single page-aligned allocation per compiled
-snippet. A production block cache will use an arena and a reclamation policy,
-but only after the device proof is measured.
+The current implementation uses a page-aligned allocation per compiled
+snippet. On Apple platforms it can use a split-W^X pair: a writable mapping
+for code generation and an executable mirror for dispatch. A production block
+cache will use an arena and a reclamation policy, but only after the device
+proof is measured.
