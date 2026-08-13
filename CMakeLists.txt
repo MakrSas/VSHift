@@ -18,6 +18,7 @@ add_library(vshift_core STATIC
     core/memory/guest_memory.cpp
     core/loader/elf.cpp
     core/loader/elf_loader.cpp
+    core/loader/self.cpp
     core/firmware/catalog.cpp
     core/firmware/slb2.cpp
     core/firmware/pup.cpp
@@ -45,6 +46,11 @@ if(VSHIFT_BUILD_TESTS)
         tests/ir_test.cpp
     )
     target_link_libraries(vshift_ir_test PRIVATE vshift_core)
+
+    add_executable(vshift_differential_test
+        tests/differential_test.cpp
+    )
+    target_link_libraries(vshift_differential_test PRIVATE vshift_core)
 
     add_executable(vshift_synthetic_boot_test
         tests/synthetic_boot_test.cpp
@@ -81,8 +87,14 @@ if(VSHIFT_BUILD_TESTS)
     )
     target_link_libraries(vshift_elf_loader_test PRIVATE vshift_core)
 
+    add_executable(vshift_self_test
+        tests/self_test.cpp
+    )
+    target_link_libraries(vshift_self_test PRIVATE vshift_core)
+
     add_test(NAME vshift_jit_smoke COMMAND vshift_jit_smoke)
     add_test(NAME vshift_ir_test COMMAND vshift_ir_test)
+    add_test(NAME vshift_differential_test COMMAND vshift_differential_test)
     add_test(NAME vshift_synthetic_boot_test COMMAND vshift_synthetic_boot_test)
     add_test(NAME vshift_slb2_test COMMAND vshift_slb2_test)
     add_test(NAME vshift_pup_test COMMAND vshift_pup_test)
@@ -90,6 +102,7 @@ if(VSHIFT_BUILD_TESTS)
     add_test(NAME vshift_elf_test COMMAND vshift_elf_test)
     add_test(NAME vshift_guest_memory_test COMMAND vshift_guest_memory_test)
     add_test(NAME vshift_elf_loader_test COMMAND vshift_elf_loader_test)
+    add_test(NAME vshift_self_test COMMAND vshift_self_test)
 endif()
 
 add_executable(vshift_firmware_inspect

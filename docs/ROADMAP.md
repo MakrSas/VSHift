@@ -36,7 +36,7 @@ unavailable. This is a correctness/debug mode, not the performance path.
 
 - [x] Add an IR interpreter with explicit guest state
 - [x] Make JIT and interpreter share instruction semantics
-- [ ] Add differential tests comparing interpreter and ARM64 JIT results
+- [x] Add differential tests comparing interpreter and ARM64 JIT results
 - [ ] Expose a runtime `JIT` / `JIT-less` execution setting
 
 ## Milestone 2a — Firmware container inspection
@@ -51,14 +51,17 @@ unavailable. This is a correctness/debug mode, not the performance path.
 
 Implement safe header parsing, PT_LOAD mapping, entry-point discovery, symbol
 metadata, and a firmware-independent synthetic ELF fixture. SELF decryption and
-key handling are out of scope for the repository unless the user supplies
-lawfully obtained material at runtime.
+key handling are runtime boundaries; the app may inspect user-provided material,
+but the repository does not bundle firmware or keys.
 
 - [x] Parse bounded little-endian ELF64 headers and program-header tables
 - [x] Validate `PT_LOAD` file/memory ranges without loading segment bytes
 - [x] Add a metadata-only firmware component catalog with bounded range lookup
 - [x] Map validated segments into sparse guest memory
 - [x] Add entry-point and synthetic guest execution report
+- [x] Parse bounded PS5 SELF headers and embedded ELF tables
+- [x] Correlate SELF payload entries with ELF `PT_LOAD` sizes
+- [ ] Decrypt and map real SELF payload bytes
 
 ## Milestone 4 — PS5 HLE foundation
 

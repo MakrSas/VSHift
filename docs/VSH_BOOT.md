@@ -35,8 +35,8 @@ test.
 
 The current foundation implements the metadata side of stage 1: an SLB2
 component catalog resolves bounded file ranges without owning firmware bytes.
-It also implements the validation side of stage 2 for little-endian ELF64
-headers and `PT_LOAD` ranges, plus sparse guest-memory mapping for synthetic
-ELF input. The iOS probe now displays a mapped-segment and entry-point report
-for that synthetic boot in either JIT or JIT-less mode. Real firmware
-execution remains future work.
+The iOS probe also validates the decrypted PUP segment table, finds the PS5 SELF
+candidate, parses its embedded ELF header and `PT_LOAD` table, and exports a
+conservative size-based payload map. Sparse guest-memory mapping currently
+remains limited to the synthetic ELF fixture; real SELF payload decryption and
+execution remain future work.

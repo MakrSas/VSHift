@@ -28,9 +28,10 @@ Support. It does not copy, decrypt, or mount firmware yet.
 
 The `Import decrypted PUP (.dec)` button accepts a user-provided decrypted
 component such as `PS5UPDATE1.PUP.dec`. It reads the fixed PUP header and
-bounded segment table, records segment offsets and sizes in the manifest, and
-reports that the file is ready for the next SELF/ELF loader step. It does not
-perform decryption or claim to boot the PS5 shell yet.
+bounded segment table, scans segment prefixes for PS5 SELF, parses the embedded
+ELF header and `PT_LOAD` table, and records a conservative size-correlated
+SELF-to-ELF map in the manifest. It does not perform payload decryption or
+claim to boot the PS5 shell yet.
 
 After a successful import, tap `Export manifest to Files` and choose a folder
 in the iOS Files app. The exported `firmware-manifest.json` contains only

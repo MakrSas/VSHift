@@ -1,12 +1,12 @@
 # Project status
 
-Date: 2026-08-13
+Date: 2026-08-14
 
 ## Current milestone
 
 Milestones 0 and 1 are complete: the JIT PoC returned `42` on the user's
-iPhone 15. Milestone 2a now has on-device SLB2 inspection, a public nested-PUP
-header probe, and metadata-only manifest storage.
+iPhone 15. Milestone 2a now has on-device SLB2 inspection, decrypted-PUP
+segment discovery, and metadata-only SELF/ELF mapping.
 
 ## Working
 
@@ -44,12 +44,19 @@ header probe, and metadata-only manifest storage.
   BSS behavior and permission-aware guest reads/writes.
 - Added a shared IR plus JIT-less interpreter for the current `mov/add/ret`
   subset; a persistent runtime mode setting is intentionally still pending.
+- Added a differential host test that checks the interpreter result against the
+  ARM64 JIT when execution is available.
 - Added a synthetic ELF boot session and iOS buttons for JIT/JIT-less boot
   reports; this is a firmware-independent pipeline, not real VSH.
+- Added bounded PS5 SELF header parsing with embedded ELF discovery and
+  conservative `PT_LOAD` ↔ SELF-entry size correlation.
+- The iOS decrypted-PUP importer now scans all PUP segments, identifies the
+  PS5 SELF candidate, records ELF architecture/entry/`PT_LOAD` data, and
+  exports the complete segment map in the manifest.
 
 ## Not working yet
 
-- No PS5 SELF decryption or real-firmware segment source.
+- No PS5 SELF payload decryption or executable real-firmware segment source.
 - No firmware importer, decryption, or filesystem extraction.
 - No block cache, HLE, GPU, audio, or input.
 - No firmware component has been extracted or executed yet.
@@ -64,7 +71,7 @@ validate the executable-memory/signing path before larger CPU work starts.
 
 1. Download the new device IPA and update the existing installation with
    iLoader.
-2. Use `Import PS5UPDATE.PUP` and record the nested public header and manifest.
+2. Import `1202_PS5UPDATE1.PUP.dec` and verify the SELF candidate/map report.
 3. Add differential tests comparing interpreter and ARM64 JIT results.
 4. Add more IR operations and a guest register/flags model while keeping the firmware parser
    independent from CPU execution.
@@ -86,5 +93,6 @@ ctest --test-dir build --output-on-failure -C Release
   provides the required host and Apple toolchains.
 - iOS JIT execution depends on a valid signed entitlement and the user's
   sideload/JIT activation path.
-- Actual PS5 VSH boot requires user-provided firmware and substantial missing
-  PS5 ABI/HLE/GPU work; no claim of VSH support is made yet.
+- Actual PS5 VSH boot still requires payload decryption support, PS5 ABI/HLE,
+  runtime linking, GPU, and input/audio work; no claim of VSH support is made
+  yet.

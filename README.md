@@ -8,8 +8,10 @@ copyrighted assets. Firmware is planned as a user-provided runtime input.
 
 ## Current status
 
-Milestone 1 proof of concept: decode a tiny x86-64 program, emit ARM64 code,
-and execute it on an ARM64 host. The expected result is `42`.
+The iPhone 15 proof of concept returns `42` in both JIT and JIT-less modes.
+The iOS probe also inspects a user-provided decrypted PS5 PUP, discovers its
+SELF/ELF header map, and exports a metadata manifest. Real SELF payload
+decryption, HLE, GPU, and VSH execution are still future milestones.
 
 See [PROJECT_STATUS.md](PROJECT_STATUS.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
 and [docs/UPSTREAM_RESEARCH.md](docs/UPSTREAM_RESEARCH.md).

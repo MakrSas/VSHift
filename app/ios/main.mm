@@ -7,6 +7,7 @@
 #include "core/firmware/pup.h"
 #include "core/firmware/slb2.h"
 #include "core/cpu/x86_decoder.h"
+#include "core/loader/self.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -27,6 +28,11 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
            (static_cast<std::uint32_t>(bytes[1]) << 8) |
            (static_cast<std::uint32_t>(bytes[2]) << 16) |
            (static_cast<std::uint32_t>(bytes[3]) << 24);
+}
+
+static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
+    return static_cast<std::uint16_t>(bytes[0]) |
+           (static_cast<std::uint16_t>(bytes[1]) << 8);
 }
 
 - (void)viewDidLoad {
@@ -368,8 +374,8 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     [handle seekToFileOffset:0];
     NSData *headerData =
         [handle readDataOfLength:publicHeader.header.header_size];
-    [handle closeFile];
     if (headerData.length < publicHeader.header.header_size) {
+        [handle closeFile];
         self.statusLabel.text = @"Could not read the decrypted PUP table.";
         if (accessed) {
             [url stopAccessingSecurityScopedResource];
@@ -383,6 +389,7 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
         std::span<const std::uint8_t>(headerBytes, headerData.length),
         fileSize);
     if (!parsed.ok()) {
+        [handle closeFile];
         self.statusLabel.text = [NSString stringWithFormat:
             @"Decrypted PUP table failed:\n%s", parsed.error.c_str()];
         if (accessed) {
@@ -393,9 +400,7 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
 
     NSMutableArray *segments =
         [NSMutableArray arrayWithCapacity:parsed.segments.size()];
-    const auto visibleSegments = std::min<std::size_t>(
-        parsed.segments.size(), 12);
-    for (std::size_t index = 0; index < visibleSegments; ++index) {
+    for (std::size_t index = 0; index < parsed.segments.size(); ++index) {
         const auto &segment = parsed.segments[index];
         [segments addObject:@{
             @"index": @(index),
@@ -405,6 +410,125 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
             @"uncompressed_size": @(segment.uncompressed_size),
         }];
     }
+
+    // Scan only bounded prefixes of PUP segments. This identifies the PS5
+    // SELF container and its embedded ELF table without touching payload code.
+    constexpr std::size_t kSelfPrefixLimit = 16 * 1024;
+    NSMutableArray *selfCandidates = [NSMutableArray array];
+    std::size_t selfMagicCount = 0;
+    std::size_t validSelfCount = 0;
+    NSDictionary *primarySelfCandidate = nil;
+    for (std::size_t index = 0; index < parsed.segments.size(); ++index) {
+        const auto &segment = parsed.segments[index];
+        if (segment.compressed_size < vshift::loader::kSelfHeaderSize ||
+            segment.offset > fileSize ||
+            segment.compressed_size > fileSize - segment.offset) {
+            continue;
+        }
+
+        [handle seekToFileOffset:segment.offset];
+        const auto fixedLength = static_cast<NSUInteger>(std::min<std::uint64_t>(
+            segment.compressed_size, vshift::loader::kSelfHeaderSize));
+        NSData *selfFixedData = [handle readDataOfLength:fixedLength];
+        if (selfFixedData.length < sizeof(std::uint32_t)) {
+            continue;
+        }
+        const auto *selfFixedBytes =
+            static_cast<const std::uint8_t *>(selfFixedData.bytes);
+        if (ReadU32LE(selfFixedBytes) != vshift::loader::kPs5SelfMagic) {
+            continue;
+        }
+        ++selfMagicCount;
+
+        NSMutableDictionary *candidate = [@{
+            @"pup_segment_index": @(index),
+            @"offset": @(segment.offset),
+            @"compressed_size": @(segment.compressed_size),
+            @"uncompressed_size": @(segment.uncompressed_size),
+            @"magic": @"0xeef51454",
+        } mutableCopy];
+
+        if (selfFixedData.length < vshift::loader::kSelfHeaderSize) {
+            candidate[@"parse_error"] = @"truncated SELF header";
+            [selfCandidates addObject:candidate];
+            continue;
+        }
+
+        const auto selfHeaderSize = ReadU16LE(selfFixedBytes + 0x0C);
+        if (selfHeaderSize < vshift::loader::kSelfHeaderSize ||
+            selfHeaderSize > kSelfPrefixLimit ||
+            selfHeaderSize > segment.compressed_size) {
+            candidate[@"parse_error"] = @"invalid SELF header size";
+            [selfCandidates addObject:candidate];
+            continue;
+        }
+
+        [handle seekToFileOffset:segment.offset];
+        NSData *selfHeaderData =
+            [handle readDataOfLength:static_cast<NSUInteger>(selfHeaderSize)];
+        const auto *selfHeaderBytes =
+            static_cast<const std::uint8_t *>(selfHeaderData.bytes);
+        const auto self = vshift::loader::ParsePs5SelfHeaders(
+            std::span<const std::uint8_t>(selfHeaderBytes,
+                                          selfHeaderData.length),
+            segment.compressed_size);
+        if (!self.ok()) {
+            candidate[@"parse_error"] = [NSString stringWithUTF8String:
+                self.error.c_str()];
+            [selfCandidates addObject:candidate];
+            continue;
+        }
+
+        std::size_t loadSegmentCount = 0;
+        for (const auto &programHeader : self.elf.program_headers) {
+            if (programHeader.type == vshift::loader::kElfProgramLoad) {
+                ++loadSegmentCount;
+            }
+        }
+        const auto mappings = vshift::loader::MatchSelfLoadEntries(self);
+        NSMutableArray *loadMappings = [NSMutableArray arrayWithCapacity:
+            mappings.size()];
+        for (const auto &mapping : mappings) {
+            [loadMappings addObject:@{
+                @"elf_program_header_index": @(mapping.program_header_index),
+                @"self_entry_index": @(mapping.self_entry_index),
+                @"physical_offset": @(mapping.physical_offset),
+                @"virtual_address": [NSString stringWithFormat:
+                    @"0x%llx",
+                    static_cast<unsigned long long>(mapping.virtual_address)],
+                @"file_size": @(mapping.file_size),
+                @"memory_size": @(mapping.memory_size),
+            }];
+        }
+        candidate[@"header_size"] = @(self.header.header_size);
+        candidate[@"metadata_size"] = @(self.header.metadata_size);
+        candidate[@"entry_count"] = @(self.header.entry_count);
+        candidate[@"elf_offset"] = @(self.elf.offset);
+        candidate[@"elf_type"] = @(self.elf.header.type);
+        candidate[@"elf_machine"] = @(self.elf.header.machine);
+        candidate[@"elf_entry"] = [NSString stringWithFormat:
+            @"0x%llx", static_cast<unsigned long long>(self.elf.header.entry)];
+        candidate[@"elf_program_headers"] = @(self.elf.program_headers.size());
+        candidate[@"elf_load_segments"] = @(loadSegmentCount);
+        candidate[@"load_mappings"] = loadMappings;
+        candidate[@"payload_state"] =
+            mappings.size() == loadSegmentCount
+                ? @"size-correlated payload map; decryption pending"
+                : @"partial payload map; decryption pending";
+        [selfCandidates addObject:candidate];
+        ++validSelfCount;
+        if (primarySelfCandidate == nil) {
+            primarySelfCandidate = candidate;
+        }
+    }
+
+    [handle closeFile];
+
+    NSString *bootStatus = validSelfCount > 0
+        ? @"PUP + SELF/ELF validated; size-correlated payload map ready"
+        : (selfMagicCount > 0
+            ? @"PUP table valid; SELF candidate needs more header data"
+            : @"PUP table validated; SELF/ELF candidate not found");
 
     NSDictionary *manifest = @{
         @"schema_version": @2,
@@ -432,7 +556,8 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
                                   parsed.header.firmware_version],
             @"segments": segments,
         },
-        @"boot_status": @"header validated; SELF/ELF loader pending",
+        @"self_candidates": selfCandidates,
+        @"boot_status": bootStatus,
     };
 
     if (accessed) {
@@ -451,16 +576,38 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
             static_cast<unsigned long long>(first.offset),
             static_cast<unsigned long long>(first.compressed_size)];
     }
-    self.statusLabel.text = [NSString stringWithFormat:
-        @"DECRYPTED PUP READY\n%@\nSize: %llu bytes\nFirmware: 0x%08x\n%@\n%@",
+    NSMutableString *summary = [NSMutableString stringWithFormat:
+        @"DECRYPTED PUP READY\n%@\nSize: %llu bytes\nFirmware: 0x%08x\n%@",
         url.lastPathComponent ?: @"PS5UPDATE1.PUP.dec",
         static_cast<unsigned long long>(fileSize),
         parsed.header.firmware_version,
-        segmentSummary,
+        segmentSummary];
+    if (validSelfCount > 0) {
+        NSDictionary *candidate = primarySelfCandidate;
+        [summary appendFormat:
+            @"\nSELF: segment %@\nELF: %@, entry %@\nPT_LOAD: %@",
+            candidate[@"pup_segment_index"],
+            [candidate[@"elf_machine"] integerValue] ==
+                    vshift::loader::kElfMachineX86_64
+                ? @"x86_64"
+                : [NSString stringWithFormat:@"machine %lld",
+                    [candidate[@"elf_machine"] longLongValue]],
+            candidate[@"elf_entry"],
+            candidate[@"elf_load_segments"]];
+        NSArray *mappings = candidate[@"load_mappings"];
+        [summary appendFormat:@"\nPayload map: %@/%@ PT_LOADs",
+                              @(mappings.count), candidate[@"elf_load_segments"]];
+    } else {
+        [summary appendFormat:@"\nSELF magic candidates: %lu",
+                              static_cast<unsigned long>(selfMagicCount)];
+    }
+    [summary appendFormat:@"\n%@\n%@",
+        bootStatus,
         manifestSaved
-            ? @"Manifest saved. Segment table is ready for SELF/ELF loading."
+            ? @"Manifest saved. SELF/ELF header map is ready."
             : [NSString stringWithFormat:@"Manifest save failed: %@",
                 manifestError.localizedDescription ?: @"unknown error"]];
+    self.statusLabel.text = summary;
 }
 
 - (BOOL)writeManifest:(NSDictionary *)manifest error:(NSError **)error {
@@ -602,7 +749,7 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     const auto parsed = vshift::firmware::ParseSlb2Table(
         std::span<const std::uint8_t>(tableBytes, tableData.length), fileSize);
     if (!parsed.ok()) {
-        self.statusLabel.text = [NSString stringWithFormat:
+    self.statusLabel.text = [NSString stringWithFormat:
             @"Firmware parse failed:\n%s", parsed.error.c_str()];
         [handle closeFile];
         if (accessed) {
