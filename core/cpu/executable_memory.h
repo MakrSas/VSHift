@@ -16,6 +16,8 @@ public:
 
     std::uint8_t* writable_data() noexcept { return data_; }
     const std::uint8_t* data() const noexcept { return data_; }
+    std::uint8_t* executable_data() noexcept { return data_; }
+    const std::uint8_t* executable_data() const noexcept { return data_; }
     std::size_t size() const noexcept { return size_; }
 
     bool MakeExecutable() noexcept;
