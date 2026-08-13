@@ -32,3 +32,8 @@ Each stage must leave an artifact or log: firmware manifest, mapped-segment
 report, import table, guest-thread trace, JIT block trace, and rendered frame.
 No claim of “real VSH” is made from a UI mock or a successful host-side unit
 test.
+
+The current foundation implements the metadata side of stage 1: an SLB2
+component catalog resolves bounded file ranges without owning firmware bytes.
+It also implements the validation side of stage 2 for little-endian ELF64
+headers and `PT_LOAD` ranges. Segment mapping and execution remain future work.

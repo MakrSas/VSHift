@@ -54,6 +54,12 @@ metadata, and a firmware-independent synthetic ELF fixture. SELF decryption and
 key handling are out of scope for the repository unless the user supplies
 lawfully obtained material at runtime.
 
+- [x] Parse bounded little-endian ELF64 headers and program-header tables
+- [x] Validate `PT_LOAD` file/memory ranges without loading segment bytes
+- [x] Add a metadata-only firmware component catalog with bounded range lookup
+- [ ] Map validated segments into guest memory
+- [ ] Add entry-point and synthetic guest execution report
+
 ## Milestone 4 — PS5 HLE foundation
 
 Add guest threads, synchronization, clocks, file I/O, virtual paths, and a

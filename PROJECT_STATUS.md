@@ -36,10 +36,14 @@ header probe, and metadata-only manifest storage.
   SLB2 component names without copying or decrypting firmware.
 - The iOS probe reads the public prefix of the first non-empty nested PUP and
   saves a metadata-only manifest in Application Support.
+- Added a metadata-only firmware catalog that resolves bounded component
+  ranges without loading firmware bytes.
+- Added a bounded ELF64/`PT_LOAD` header parser and synthetic malformed-input
+  tests; segment mapping is not implemented yet.
 
 ## Not working yet
 
-- No PS5 ELF/SELF loader.
+- No PS5 SELF decryption or ELF segment mapper.
 - No firmware importer, decryption, or filesystem extraction.
 - No guest memory subsystem, IR, block cache, HLE, GPU, audio, or input.
 - No firmware component has been extracted or executed yet.
@@ -55,7 +59,7 @@ validate the executable-memory/signing path before larger CPU work starts.
 1. Download the new device IPA and update the existing installation with
    iLoader.
 2. Use `Import PS5UPDATE.PUP` and record the nested public header and manifest.
-3. Add a read-only firmware filesystem over user-provided components.
+3. Map validated ELF segments into guest memory using the read-only catalog.
 4. Add IR and a guest register/flags model while keeping the firmware parser
    independent from CPU execution.
 5. Add a JIT-less IR interpreter for firmware and CPU experiments without

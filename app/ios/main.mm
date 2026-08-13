@@ -2,6 +2,7 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include "core/cpu/arm64_jit.h"
+#include "core/firmware/catalog.h"
 #include "core/firmware/pup.h"
 #include "core/firmware/slb2.h"
 #include "core/cpu/x86_decoder.h"
@@ -269,6 +270,7 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
         return;
     }
 
+    const vshift::firmware::ReadOnlyFirmwareCatalog catalog(parsed.package);
     std::size_t fragmentIndex = parsed.package.entries.size();
     for (std::size_t index = 0; index < parsed.package.entries.size(); ++index) {
         if (parsed.package.entries[index].size >=
@@ -282,18 +284,22 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     bool fragmentRead = false;
     if (fragmentIndex < parsed.package.entries.size()) {
         const auto &entry = parsed.package.entries[fragmentIndex];
-        [handle seekToFileOffset:entry.offset];
-        NSData *fragmentData =
-            [handle readDataOfLength:
-                         vshift::firmware::kPupFragmentPublicHeaderSize];
-        if (fragmentData.length ==
-            vshift::firmware::kPupFragmentPublicHeaderSize) {
-            const auto *fragmentBytes =
-                static_cast<const std::uint8_t *>(fragmentData.bytes);
-            fragment = vshift::firmware::ParsePupFragmentHeader(
-                std::span<const std::uint8_t>(
-                    fragmentBytes, fragmentData.length));
-            fragmentRead = true;
+        const auto range = catalog.Resolve(
+            entry.name, 0, vshift::firmware::kPupFragmentPublicHeaderSize);
+        if (range.ok()) {
+            [handle seekToFileOffset:range.range.absolute_offset];
+            NSData *fragmentData =
+                [handle readDataOfLength:
+                             vshift::firmware::kPupFragmentPublicHeaderSize];
+            if (fragmentData.length ==
+                vshift::firmware::kPupFragmentPublicHeaderSize) {
+                const auto *fragmentBytes =
+                    static_cast<const std::uint8_t *>(fragmentData.bytes);
+                fragment = vshift::firmware::ParsePupFragmentHeader(
+                    std::span<const std::uint8_t>(
+                        fragmentBytes, fragmentData.length));
+                fragmentRead = true;
+            }
         }
     }
 
