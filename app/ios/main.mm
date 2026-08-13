@@ -96,7 +96,6 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     UIView *statusCard = [[UIView alloc] init];
     statusCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
     statusCard.layer.cornerRadius = 24.0;
-    statusCard.layer.cornerCurve = kCACornerCurveContinuous;
     statusCard.layoutMargins = UIEdgeInsetsMake(18.0, 18.0, 18.0, 18.0);
 
     UILabel *statusTitle = [[UILabel alloc] init];
@@ -153,7 +152,6 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     UIView *firmwareCard = [[UIView alloc] init];
     firmwareCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
     firmwareCard.layer.cornerRadius = 24.0;
-    firmwareCard.layer.cornerCurve = kCACornerCurveContinuous;
     firmwareCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
     UIStackView *firmwareStack = [[UIStackView alloc] initWithArrangedSubviews:@[
         firmwareHeader, importButton, self.exportManifestButton
@@ -196,7 +194,6 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     UIView *bootCard = [[UIView alloc] init];
     bootCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
     bootCard.layer.cornerRadius = 24.0;
-    bootCard.layer.cornerCurve = kCACornerCurveContinuous;
     bootCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
     UIStackView *bootStack = [[UIStackView alloc] initWithArrangedSubviews:@[
         bootHeader, syntheticJitButton, syntheticJitLessButton
