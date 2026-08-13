@@ -71,7 +71,8 @@ Arm64Jit::Result Arm64Jit::Compile(
 }
 
 bool Arm64Jit::Execute(std::uint32_t& result) const noexcept {
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(__arm64__) || defined(__ARM64__) || \
+    defined(_M_ARM64)
     using Function = std::uint32_t (*)();
     const auto function = reinterpret_cast<Function>(memory_->executable_data());
     result = function();

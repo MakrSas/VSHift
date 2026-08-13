@@ -20,9 +20,16 @@
 
     std::uint32_t result = 0;
     const bool executed = compiled.ok() && compiled.jit->Execute(result);
-    NSString *message = executed
-        ? [NSString stringWithFormat:@"ARM64 JIT result: %u", result]
-        : @"ARM64 JIT did not execute. Check signing/JIT entitlement.";
+    NSString *message = nil;
+    if (executed) {
+        message = [NSString stringWithFormat:@"ARM64 JIT result: %u", result];
+    } else if (!compiled.ok()) {
+        message = [NSString stringWithFormat:
+            @"JIT memory setup failed: %@\nCheck signing/JIT entitlement.",
+            [NSString stringWithUTF8String:compiled.error.c_str()]];
+    } else {
+        message = @"JIT compiled but did not execute on this architecture.";
+    }
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
     UILabel *label = [[UILabel alloc] initWithFrame:self.view.bounds];
