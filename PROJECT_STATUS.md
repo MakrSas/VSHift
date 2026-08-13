@@ -29,6 +29,8 @@ iPhone verification.
   iLoader + StikDebug test path.
 - The Apple executable-memory backend now mirrors UTM's split-W^X fallback for
   iLoader installs and uses UTM's `BRK #0x69` StikDebug hook on iOS 26/TXM.
+- Added the first real-firmware boundary: a read-only PS5 `SLB2` table parser,
+  CLI inspector, and malformed-input tests. No firmware is bundled.
 
 ## Not working yet
 
@@ -50,8 +52,9 @@ validate the executable-memory/signing path before larger CPU work starts.
 2. Assign StikDebug's `legacy.js` to VSHift, activate JIT, and launch it from
    StikDebug on the iPhone 15.
 3. Record `ARM64 JIT result: 42` and device logs.
-4. Add IR and a guest register/flags model only after the device proof passes.
-5. Add a demand-driven basic-block cache.
+4. Add IR and a guest register/flags model while keeping the firmware parser
+   independent from CPU execution.
+5. Add an iOS document picker and persist a firmware manifest.
 
 ## Important commands
 

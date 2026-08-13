@@ -13,6 +13,7 @@ add_library(vshift_core STATIC
     core/cpu/executable_memory.cpp
     core/cpu/arm64_jit.cpp
     core/cpu/x86_decoder.cpp
+    core/firmware/slb2.cpp
 )
 
 target_include_directories(vshift_core PUBLIC
@@ -33,8 +34,19 @@ if(VSHIFT_BUILD_TESTS)
     )
     target_link_libraries(vshift_jit_smoke PRIVATE vshift_core)
 
+    add_executable(vshift_slb2_test
+        tests/slb2_test.cpp
+    )
+    target_link_libraries(vshift_slb2_test PRIVATE vshift_core)
+
     add_test(NAME vshift_jit_smoke COMMAND vshift_jit_smoke)
+    add_test(NAME vshift_slb2_test COMMAND vshift_slb2_test)
 endif()
+
+add_executable(vshift_firmware_inspect
+    tools/firmware_inspect.cpp
+)
+target_link_libraries(vshift_firmware_inspect PRIVATE vshift_core)
 
 if(VSHIFT_BUILD_IOS)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")

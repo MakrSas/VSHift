@@ -27,6 +27,13 @@ Add an explicit guest register file, flags, stack model, branches, calls,
 memory operands, and a demand-driven instruction coverage test suite. Do not
 start with all of x86-64 or AVX.
 
+## Milestone 2a — Firmware container inspection
+
+- [x] Parse the PS5 `SLB2` outer container header and file table
+- [x] Validate table bounds and component ranges without loading the whole PUP
+- [x] Add a host inspector and synthetic malformed-input tests
+- [ ] Add an iOS document picker and versioned manifest storage
+
 ## Milestone 3 — PS5 ELF/SELF loader
 
 Implement safe header parsing, PT_LOAD mapping, entry-point discovery, symbol
