@@ -33,23 +33,26 @@ bool AddWouldOverflow(std::uint64_t left,
     return right > std::numeric_limits<std::uint64_t>::max() - left;
 }
 
-} // namespace
-
-SelfParseResult ParsePs5SelfHeaders(
+SelfParseResult ParseSelfHeadersForPlatform(
     std::span<const std::uint8_t> header_bytes,
-    std::uint64_t actual_file_size) {
+    std::uint64_t actual_file_size,
+    std::uint32_t expected_magic,
+    SelfPlatform platform,
+    const char* platform_name) {
     SelfParseResult result;
     if (header_bytes.size() < kSelfHeaderSize) {
-        result.error = "PS5 SELF header is truncated";
+        result.error = std::string(platform_name) + " SELF header is truncated";
         return result;
     }
 
     const auto* bytes = header_bytes.data();
     result.header.magic = ReadU32LE(bytes + 0x00);
-    if (result.header.magic != kPs5SelfMagic) {
-        result.error = "payload is not a PS5 SELF";
+    if (result.header.magic != expected_magic) {
+        result.error = std::string("payload is not a ") + platform_name +
+                       " SELF";
         return result;
     }
+    result.platform = platform;
     result.header.version = bytes[0x04];
     result.header.mode = bytes[0x05];
     result.header.endian = bytes[0x06];
@@ -65,13 +68,15 @@ SelfParseResult ParsePs5SelfHeaders(
         result.header.file_size < kSelfHeaderSize ||
         result.header.header_size < kSelfHeaderSize ||
         result.header.header_size > result.header.file_size) {
-        result.error = "PS5 SELF size fields are invalid";
+        result.error = std::string(platform_name) +
+                       " SELF size fields are invalid";
         return result;
     }
 
     constexpr std::uint16_t kMaximumEntries = 4096;
     if (result.header.entry_count > kMaximumEntries) {
-        result.error = "PS5 SELF entry count is unreasonable";
+        result.error = std::string(platform_name) +
+                       " SELF entry count is unreasonable";
         return result;
     }
 
@@ -79,14 +84,16 @@ SelfParseResult ParsePs5SelfHeaders(
         static_cast<std::uint64_t>(result.header.entry_count) *
         kSelfEntrySize;
     if (AddWouldOverflow(kSelfHeaderSize, table_size)) {
-        result.error = "PS5 SELF entry table overflows";
+        result.error = std::string(platform_name) +
+                       " SELF entry table overflows";
         return result;
     }
     const auto table_end = static_cast<std::uint64_t>(kSelfHeaderSize) +
                            table_size;
     if (table_end > result.header.header_size ||
         table_end > header_bytes.size()) {
-        result.error = "PS5 SELF entry table is truncated";
+        result.error = std::string(platform_name) +
+                       " SELF entry table is truncated";
         return result;
     }
 
@@ -94,7 +101,8 @@ SelfParseResult ParsePs5SelfHeaders(
                          result.header.metadata_size) ||
         static_cast<std::uint64_t>(result.header.header_size) +
                 result.header.metadata_size > result.header.file_size) {
-        result.error = "PS5 SELF metadata range is invalid";
+        result.error = std::string(platform_name) +
+                       " SELF metadata range is invalid";
         return result;
     }
 
@@ -114,7 +122,8 @@ SelfParseResult ParsePs5SelfHeaders(
         if (entry.compressed_size > entry.uncompressed_size ||
             AddWouldOverflow(entry.offset, entry.compressed_size) ||
             entry.offset + entry.compressed_size > result.header.file_size) {
-            result.error = "PS5 SELF entry range is invalid";
+            result.error = std::string(platform_name) +
+                           " SELF entry range is invalid";
             result.entries.clear();
             return result;
         }
@@ -147,7 +156,47 @@ SelfParseResult ParsePs5SelfHeaders(
         return result;
     }
 
-    result.error = "PS5 SELF has no embedded ELF header in its header area";
+    result.error = std::string(platform_name) +
+                   " SELF has no embedded ELF header in its header area";
+    return result;
+}
+
+} // namespace
+
+SelfParseResult ParsePs4SelfHeaders(
+    std::span<const std::uint8_t> header_bytes,
+    std::uint64_t actual_file_size) {
+    return ParseSelfHeadersForPlatform(
+        header_bytes, actual_file_size, kPs4SelfMagic, SelfPlatform::Ps4,
+        "PS4");
+}
+
+SelfParseResult ParsePs5SelfHeaders(
+    std::span<const std::uint8_t> header_bytes,
+    std::uint64_t actual_file_size) {
+    return ParseSelfHeadersForPlatform(
+        header_bytes, actual_file_size, kPs5SelfMagic, SelfPlatform::Ps5,
+        "PS5");
+}
+
+SelfParseResult ParseSelfHeaders(std::span<const std::uint8_t> header_bytes,
+                                 std::uint64_t actual_file_size) {
+    if (header_bytes.size() < sizeof(std::uint32_t)) {
+        SelfParseResult result;
+        result.error = "SELF magic is truncated";
+        return result;
+    }
+
+    const auto magic = ReadU32LE(header_bytes.data());
+    if (magic == kPs4SelfMagic) {
+        return ParsePs4SelfHeaders(header_bytes, actual_file_size);
+    }
+    if (magic == kPs5SelfMagic) {
+        return ParsePs5SelfHeaders(header_bytes, actual_file_size);
+    }
+
+    SelfParseResult result;
+    result.error = "payload is not a supported PS4/PS5 SELF";
     return result;
 }
 

@@ -12,7 +12,14 @@ namespace vshift::loader {
 
 constexpr std::size_t kSelfHeaderSize = 0x20;
 constexpr std::size_t kSelfEntrySize = 0x20;
+constexpr std::uint32_t kPs4SelfMagic = 0x1D3D154F;
 constexpr std::uint32_t kPs5SelfMagic = 0xEEF51454;
+
+enum class SelfPlatform : std::uint8_t {
+    Unknown = 0,
+    Ps4,
+    Ps5,
+};
 
 struct SelfHeader final {
     std::uint32_t magic = 0;
@@ -51,6 +58,7 @@ struct SelfLoadMapping final {
 };
 
 struct SelfParseResult final {
+    SelfPlatform platform = SelfPlatform::Unknown;
     SelfHeader header;
     std::vector<SelfEntry> entries;
     SelfElfSummary elf;
@@ -60,12 +68,23 @@ struct SelfParseResult final {
     bool has_elf() const noexcept { return elf.header.header_size != 0; }
 };
 
+// Parses a bounded prefix of a PS4 SELF. The prefix must contain the fixed
+// header, entry table, and embedded ELF program-header table. Payload bytes,
+// encrypted metadata, and executable code are not read or interpreted.
+SelfParseResult ParsePs4SelfHeaders(
+    std::span<const std::uint8_t> header_bytes,
+    std::uint64_t actual_file_size);
+
 // Parses a bounded prefix of a PS5 SELF. The prefix must contain the fixed
 // header, entry table, and embedded ELF program-header table. Payload bytes,
 // encrypted metadata, and executable code are not read or interpreted.
 SelfParseResult ParsePs5SelfHeaders(
     std::span<const std::uint8_t> header_bytes,
     std::uint64_t actual_file_size);
+
+// Dispatches to the PS4 or PS5 SELF parser based on the file magic.
+SelfParseResult ParseSelfHeaders(std::span<const std::uint8_t> header_bytes,
+                                 std::uint64_t actual_file_size);
 
 // Correlates loadable ELF program headers with SELF entries by exact payload
 // size. This is a conservative physical-layout hint: it does not decrypt,

@@ -117,5 +117,21 @@ int main() {
 
     WriteU64LE(header, 0x50, kFileSize);
     assert(!vshift::loader::ParsePs5SelfHeaders(header, kFileSize).ok());
+
+    WriteU64LE(header, 0x50, 0x2000);
+    WriteU32LE(header, 0x00, vshift::loader::kPs4SelfMagic);
+    const auto ps4 = vshift::loader::ParsePs4SelfHeaders(header, kFileSize);
+    assert(ps4.ok());
+    assert(ps4.platform == vshift::loader::SelfPlatform::Ps4);
+    assert(ps4.header.magic == vshift::loader::kPs4SelfMagic);
+    assert(ps4.elf.header.machine == vshift::loader::kElfMachineX86_64);
+
+    const auto dispatched =
+        vshift::loader::ParseSelfHeaders(header, kFileSize);
+    assert(dispatched.ok());
+    assert(dispatched.platform == vshift::loader::SelfPlatform::Ps4);
+
+    WriteU32LE(header, 0x00, 0x12345678);
+    assert(!vshift::loader::ParseSelfHeaders(header, kFileSize).ok());
     return 0;
 }

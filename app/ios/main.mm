@@ -20,6 +20,7 @@
 @property(nonatomic, strong) NSURL *manifestURL;
 @property(nonatomic, assign) BOOL pickingDecryptedFirmware;
 @property(nonatomic, assign) BOOL pickingFirmwareRoot;
+@property(nonatomic, assign) BOOL pickingFirmwareSelfProbe;
 @end
 
 @implementation VSHiftJITViewController
@@ -182,12 +183,24 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
                                action:@selector(runSyntheticJitLess)
                      forControlEvents:UIControlEventTouchUpInside];
 
+    UIButtonConfiguration *selfProbeConfiguration =
+        [UIButtonConfiguration tintedButtonConfiguration];
+    selfProbeConfiguration.title = @"Probe real PS4 SELF headers";
+    selfProbeConfiguration.image = [UIImage systemImageNamed:@"doc.text.magnifyingglass"];
+    selfProbeConfiguration.imagePadding = 8.0;
+    selfProbeConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    UIButton *selfProbeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    selfProbeButton.configuration = selfProbeConfiguration;
+    [selfProbeButton addTarget:self
+                        action:@selector(probeFirmwareSelf)
+              forControlEvents:UIControlEventTouchUpInside];
+
     UIView *bootCard = [[UIView alloc] init];
     bootCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
     bootCard.layer.cornerRadius = 24.0;
     bootCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
     UIStackView *bootStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        bootHeader, syntheticJitButton, syntheticJitLessButton
+        bootHeader, selfProbeButton, syntheticJitButton, syntheticJitLessButton
     ]];
     bootStack.axis = UILayoutConstraintAxisVertical;
     bootStack.spacing = 12.0;
@@ -227,6 +240,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 - (void)importFirmware {
     self.pickingDecryptedFirmware = NO;
     self.pickingFirmwareRoot = NO;
+    self.pickingFirmwareSelfProbe = NO;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
             initForOpeningContentTypes:@[UTTypeData]
@@ -239,6 +253,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 - (void)importDecryptedFirmware {
     self.pickingDecryptedFirmware = YES;
     self.pickingFirmwareRoot = NO;
+    self.pickingFirmwareSelfProbe = NO;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
             initForOpeningContentTypes:@[UTTypeData]
@@ -251,6 +266,20 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 - (void)importFirmwareRoot {
     self.pickingDecryptedFirmware = NO;
     self.pickingFirmwareRoot = YES;
+    self.pickingFirmwareSelfProbe = NO;
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc]
+            initForOpeningContentTypes:@[UTTypeFolder]
+                                 asCopy:NO];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)probeFirmwareSelf {
+    self.pickingDecryptedFirmware = NO;
+    self.pickingFirmwareRoot = NO;
+    self.pickingFirmwareSelfProbe = YES;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
             initForOpeningContentTypes:@[UTTypeFolder]
@@ -415,6 +444,164 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         requiredPathsPresent
             ? @"PS4 firmware root preflight passed; next stage is SELF payload mapping"
             : @"Safe Mode preflight incomplete; choose the extracted firmware root",
+        manifestSaved
+            ? @"Manifest saved."
+            : [NSString stringWithFormat:@"Manifest save failed: %@",
+                manifestError.localizedDescription ?: @"unknown error"]];
+    self.statusLabel.text = summary;
+}
+
+- (void)probeFirmwareSelfAtURL:(NSURL *)url {
+    const BOOL accessed = [url startAccessingSecurityScopedResource];
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSArray<NSString *> *paths = @[
+        @"system/sys/SceSysCore.elf",
+        @"system/vsh/SceShellCore.elf",
+    ];
+    constexpr std::uint16_t kMaximumSelfHeaderSize = 16 * 1024;
+    NSMutableArray *probes = [NSMutableArray arrayWithCapacity:paths.count];
+    NSMutableString *summary = [NSMutableString stringWithFormat:
+        @"PS4 SELF PROBE\n%@", url.lastPathComponent ?: @"firmware-root"];
+    std::size_t validCount = 0;
+
+    for (NSString *relativePath in paths) {
+        NSURL *candidate = [url URLByAppendingPathComponent:relativePath];
+        NSDictionary *attributes =
+            [fileManager attributesOfItemAtPath:candidate.path error:nil];
+        NSNumber *fileSizeNumber = attributes[NSFileSize];
+        const auto fileSize = fileSizeNumber != nil
+                                  ? fileSizeNumber.unsignedLongLongValue
+                                  : 0;
+        NSMutableDictionary *probe = [@{
+            @"path": relativePath,
+            @"file_size": @(fileSize),
+        } mutableCopy];
+        if (fileSize < vshift::loader::kSelfHeaderSize) {
+            probe[@"error"] = @"file is missing or SELF header is truncated";
+            [probes addObject:probe];
+            [summary appendFormat:@"\n✗ %@", relativePath];
+            continue;
+        }
+
+        NSFileHandle *handle =
+            [NSFileHandle fileHandleForReadingFromURL:candidate error:nil];
+        if (handle == nil) {
+            probe[@"error"] = @"could not open SELF";
+            [probes addObject:probe];
+            [summary appendFormat:@"\n✗ %@ (open failed)", relativePath];
+            continue;
+        }
+
+        NSData *fixedData =
+            [handle readDataOfLength:vshift::loader::kSelfHeaderSize];
+        if (fixedData.length < vshift::loader::kSelfHeaderSize) {
+            [handle closeFile];
+            probe[@"error"] = @"SELF fixed header is truncated";
+            [probes addObject:probe];
+            [summary appendFormat:@"\n✗ %@ (truncated)", relativePath];
+            continue;
+        }
+
+        const auto *fixedBytes =
+            static_cast<const std::uint8_t *>(fixedData.bytes);
+        const auto magic = ReadU32LE(fixedBytes);
+        const auto headerSize = ReadU16LE(fixedBytes + 0x0C);
+        probe[@"magic"] = [NSString stringWithFormat:@"0x%08x", magic];
+        probe[@"header_size"] = @(headerSize);
+        if (magic != vshift::loader::kPs4SelfMagic ||
+            headerSize < vshift::loader::kSelfHeaderSize ||
+            headerSize > kMaximumSelfHeaderSize ||
+            headerSize > fileSize) {
+            [handle closeFile];
+            probe[@"error"] = @"invalid PS4 SELF public header";
+            [probes addObject:probe];
+            [summary appendFormat:@"\n✗ %@ (not a valid PS4 SELF header)",
+                relativePath];
+            continue;
+        }
+
+        [handle seekToFileOffset:0];
+        NSData *headerData =
+            [handle readDataOfLength:static_cast<NSUInteger>(headerSize)];
+        [handle closeFile];
+        if (headerData.length < headerSize) {
+            probe[@"error"] = @"SELF public header is truncated";
+            [probes addObject:probe];
+            [summary appendFormat:@"\n✗ %@ (header truncated)", relativePath];
+            continue;
+        }
+
+        const auto *headerBytes =
+            static_cast<const std::uint8_t *>(headerData.bytes);
+        const auto parsedSelf = vshift::loader::ParsePs4SelfHeaders(
+            std::span<const std::uint8_t>(headerBytes, headerData.length),
+            fileSize);
+        if (!parsedSelf.ok()) {
+            probe[@"error"] = [NSString stringWithUTF8String:
+                parsedSelf.error.c_str()];
+            [probes addObject:probe];
+            [summary appendFormat:@"\n✗ %@ (%s)", relativePath,
+                parsedSelf.error.c_str()];
+            continue;
+        }
+
+        std::size_t loadCount = 0;
+        for (const auto &program : parsedSelf.elf.program_headers) {
+            if (program.type == vshift::loader::kElfProgramLoad) {
+                ++loadCount;
+            }
+        }
+        const auto mappings = vshift::loader::MatchSelfLoadEntries(parsedSelf);
+        probe[@"metadata_size"] = @(parsedSelf.header.metadata_size);
+        probe[@"entry_count"] = @(parsedSelf.header.entry_count);
+        probe[@"elf_offset"] = @(parsedSelf.elf.offset);
+        probe[@"elf_machine"] = @(parsedSelf.elf.header.machine);
+        probe[@"elf_entry"] = [NSString stringWithFormat:@"0x%llx",
+            static_cast<unsigned long long>(parsedSelf.elf.header.entry)];
+        probe[@"elf_program_headers"] = @(parsedSelf.elf.program_headers.size());
+        probe[@"elf_load_segments"] = @(loadCount);
+        probe[@"payload_map_count"] = @(mappings.size());
+        probe[@"payload_state"] =
+            mappings.size() == loadCount
+                ? @"size-correlated payload map; decryption pending"
+                : @"partial payload map; decryption pending";
+        [probes addObject:probe];
+        ++validCount;
+
+        NSString *machine = parsedSelf.elf.header.machine ==
+                                    vshift::loader::kElfMachineX86_64
+                                ? @"x86_64"
+                                : [NSString stringWithFormat:@"machine %u",
+                                    parsedSelf.elf.header.machine];
+        [summary appendFormat:
+            @"\n✓ %@\n  SELF 0x%08x, ELF %@\n  Entry %@, PT_LOAD %lu, map %lu/%lu",
+            relativePath, parsedSelf.header.magic, machine, probe[@"elf_entry"],
+            static_cast<unsigned long>(loadCount),
+            static_cast<unsigned long>(mappings.size()),
+            static_cast<unsigned long>(loadCount)];
+    }
+
+    NSDictionary *manifest = @{
+        @"schema_version": @4,
+        @"source_file_name": url.lastPathComponent ?: @"firmware-root",
+        @"source_kind": @"user-provided decrypted PS4 firmware root",
+        @"boot_profile": @"PS4 VSH SELF probe",
+        @"root_path": url.path ?: @"",
+        @"self_probe": probes,
+        @"boot_status": validCount > 0
+            ? @"PS4 SELF headers validated; payload execution pending"
+            : @"No valid PS4 SELF entry was found",
+    };
+
+    if (accessed) {
+        [url stopAccessingSecurityScopedResource];
+    }
+    NSError *manifestError = nil;
+    const BOOL manifestSaved = [self writeManifest:manifest error:&manifestError];
+    [summary appendFormat:@"\n%@\n%@",
+        validCount > 0
+            ? @"Real PS4 SELF metadata is mapped; execution is the next stage."
+            : @"Choose the extracted Firmware 5.05 root.",
         manifestSaved
             ? @"Manifest saved."
             : [NSString stringWithFormat:@"Manifest save failed: %@",
@@ -791,6 +978,12 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     if (self.pickingFirmwareRoot) {
         self.pickingFirmwareRoot = NO;
         [self inspectFirmwareRootAtURL:url];
+        return;
+    }
+
+    if (self.pickingFirmwareSelfProbe) {
+        self.pickingFirmwareSelfProbe = NO;
+        [self probeFirmwareSelfAtURL:url];
         return;
     }
 
