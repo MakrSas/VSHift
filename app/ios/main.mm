@@ -125,7 +125,7 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     firmwareHeader.textColor = UIColor.secondaryLabelColor;
     firmwareHeader.adjustsFontForContentSizeCategory = YES;
 
-    UIButtonConfiguration importConfiguration =
+    UIButtonConfiguration *importConfiguration =
         [UIButtonConfiguration filledButtonConfiguration];
     importConfiguration.title = @"Import PS5UPDATE.PUP";
     importConfiguration.image = [UIImage systemImageNamed:@"arrow.down.doc"];
@@ -137,7 +137,7 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
                      action:@selector(importFirmware)
            forControlEvents:UIControlEventTouchUpInside];
 
-    UIButtonConfiguration exportConfiguration =
+    UIButtonConfiguration *exportConfiguration =
         [UIButtonConfiguration tintedButtonConfiguration];
     exportConfiguration.title = @"Export manifest to Files";
     exportConfiguration.image = [UIImage systemImageNamed:@"square.and.arrow.up"];
@@ -169,7 +169,7 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     bootHeader.textColor = UIColor.secondaryLabelColor;
     bootHeader.adjustsFontForContentSizeCategory = YES;
 
-    UIButtonConfiguration jitConfiguration =
+    UIButtonConfiguration *jitConfiguration =
         [UIButtonConfiguration filledButtonConfiguration];
     jitConfiguration.title = @"Run synthetic boot · JIT";
     jitConfiguration.image = [UIImage systemImageNamed:@"bolt.fill"];
@@ -181,7 +181,7 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
                            action:@selector(runSyntheticJit)
                  forControlEvents:UIControlEventTouchUpInside];
 
-    UIButtonConfiguration jitLessConfiguration =
+    UIButtonConfiguration *jitLessConfiguration =
         [UIButtonConfiguration grayButtonConfiguration];
     jitLessConfiguration.title = @"Run synthetic boot · JIT-less";
     jitLessConfiguration.image = [UIImage systemImageNamed:@"gauge.with.dots.needle.33percent"];
