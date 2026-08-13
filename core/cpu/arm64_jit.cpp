@@ -27,25 +27,34 @@ constexpr std::uint32_t Ret() {
 
 Arm64Jit::Result Arm64Jit::Compile(
     std::span<const X86Instruction> instructions) {
+    const auto lowered = LowerToIr(instructions);
+    if (!lowered.ok()) {
+        return {nullptr, lowered.error};
+    }
+    return CompileIr(lowered.instructions);
+}
+
+Arm64Jit::Result Arm64Jit::CompileIr(
+    std::span<const IrInstruction> instructions) {
     std::vector<std::uint32_t> code;
     code.reserve(instructions.size());
 
     for (const auto& instruction : instructions) {
         switch (instruction.opcode) {
-        case X86Opcode::MovEaxImm32:
+        case IrOpcode::SetEaxImm32:
             if (instruction.immediate > 0xFFFFu) {
                 return {nullptr, "mov eax immediate is outside PoC range"};
             }
             code.push_back(MovW0Imm(instruction.immediate));
             break;
-        case X86Opcode::AddEaxImm8:
+        case IrOpcode::AddEaxImm32:
             if (static_cast<std::int32_t>(instruction.immediate) < 0 ||
                 instruction.immediate > 0xFFFu) {
                 return {nullptr, "add eax immediate is outside PoC range"};
             }
             code.push_back(AddW0Imm(instruction.immediate));
             break;
-        case X86Opcode::Ret:
+        case IrOpcode::Return:
             code.push_back(Ret());
             break;
         }

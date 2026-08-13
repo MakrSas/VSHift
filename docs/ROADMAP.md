@@ -34,8 +34,8 @@ the same IR without `ExecutableMemory`, so decoder, flags, loader, and
 firmware-boot experiments can run on devices or CI environments where JIT is
 unavailable. This is a correctness/debug mode, not the performance path.
 
-- [ ] Add an IR interpreter with explicit guest state
-- [ ] Make JIT and interpreter share instruction semantics
+- [x] Add an IR interpreter with explicit guest state
+- [x] Make JIT and interpreter share instruction semantics
 - [ ] Add differential tests comparing interpreter and ARM64 JIT results
 - [ ] Expose a runtime `JIT` / `JIT-less` execution setting
 

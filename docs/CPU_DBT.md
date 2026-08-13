@@ -14,8 +14,9 @@ bytes: B8 28 00 00 00 83 C0 02 C3
 ```
 
 The decoder, backend, and executable-memory policy are separate files. The
-next stage adds an IR so the decoder does not need to know register allocation
-or host instruction encoding.
+decoder now lowers into a shared IR. The ARM64 backend and the JIT-less
+interpreter consume that same IR, so the interpreter can serve as the reference
+semantics for the current instruction subset.
 
 ## Planned execution model
 

@@ -42,12 +42,14 @@ header probe, and metadata-only manifest storage.
   tests; real-firmware segment sourcing is not implemented yet.
 - Added sparse guest memory and synthetic `PT_LOAD` mapping with zero-filled
   BSS behavior and permission-aware guest reads/writes.
+- Added a shared IR plus JIT-less interpreter for the current `mov/add/ret`
+  subset; the runtime UI switch is intentionally still pending.
 
 ## Not working yet
 
 - No PS5 SELF decryption or real-firmware segment source.
 - No firmware importer, decryption, or filesystem extraction.
-- No IR, block cache, HLE, GPU, audio, or input.
+- No block cache, HLE, GPU, audio, or input.
 - No firmware component has been extracted or executed yet.
 
 ## Current hypothesis

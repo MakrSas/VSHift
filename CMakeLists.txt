@@ -12,6 +12,7 @@ option(VSHIFT_BUILD_IOS "Build the iOS application target" OFF)
 add_library(vshift_core STATIC
     core/cpu/executable_memory.cpp
     core/cpu/arm64_jit.cpp
+    core/cpu/ir.cpp
     core/cpu/x86_decoder.cpp
     core/memory/guest_memory.cpp
     core/loader/elf.cpp
@@ -38,6 +39,11 @@ if(VSHIFT_BUILD_TESTS)
         tests/jit_smoke.cpp
     )
     target_link_libraries(vshift_jit_smoke PRIVATE vshift_core)
+
+    add_executable(vshift_ir_test
+        tests/ir_test.cpp
+    )
+    target_link_libraries(vshift_ir_test PRIVATE vshift_core)
 
     add_executable(vshift_slb2_test
         tests/slb2_test.cpp
@@ -70,6 +76,7 @@ if(VSHIFT_BUILD_TESTS)
     target_link_libraries(vshift_elf_loader_test PRIVATE vshift_core)
 
     add_test(NAME vshift_jit_smoke COMMAND vshift_jit_smoke)
+    add_test(NAME vshift_ir_test COMMAND vshift_ir_test)
     add_test(NAME vshift_slb2_test COMMAND vshift_slb2_test)
     add_test(NAME vshift_pup_test COMMAND vshift_pup_test)
     add_test(NAME vshift_catalog_test COMMAND vshift_catalog_test)
