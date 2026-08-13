@@ -53,11 +53,15 @@ segment discovery, and metadata-only SELF/ELF mapping.
 - The iOS decrypted-PUP importer now scans all PUP segments, identifies the
   PS5 SELF candidate, records ELF architecture/entry/`PT_LOAD` data, and
   exports the complete segment map in the manifest.
+- Added a firmware-root picker and RPCSX-compatible Safe Mode preflight. It
+  checks for `mini-syscore.elf`, system libraries, and the expected `system/`
+  root layout without copying the user dump.
 
 ## Not working yet
 
 - No PS5 SELF payload decryption or executable real-firmware segment source.
-- No firmware importer, decryption, or filesystem extraction.
+- No filesystem extraction from the decrypted PUP into a firmware root yet.
+- No firmware payload decryption or filesystem extraction.
 - No block cache, HLE, GPU, audio, or input.
 - No firmware component has been extracted or executed yet.
 
@@ -71,8 +75,8 @@ validate the executable-memory/signing path before larger CPU work starts.
 
 1. Download the new device IPA and update the existing installation with
    iLoader.
-2. Import `1202_PS5UPDATE1.PUP.dec` and verify the SELF candidate/map report.
-3. Add differential tests comparing interpreter and ARM64 JIT results.
+2. Import a fully unpacked decrypted firmware root and run Safe Mode preflight.
+3. Implement a file-backed guest VFS and bounded SELF payload source.
 4. Add more IR operations and a guest register/flags model while keeping the firmware parser
    independent from CPU execution.
 5. Add a JIT-less IR interpreter for firmware and CPU experiments without
@@ -93,6 +97,6 @@ ctest --test-dir build --output-on-failure -C Release
   provides the required host and Apple toolchains.
 - iOS JIT execution depends on a valid signed entitlement and the user's
   sideload/JIT activation path.
-- Actual PS5 VSH boot still requires payload decryption support, PS5 ABI/HLE,
-  runtime linking, GPU, and input/audio work; no claim of VSH support is made
-  yet.
+- Actual PS5 VSH boot still requires file-backed guest VFS, SELF payload
+  decryption/mapping, PS5 ABI/HLE, runtime linking, GPU, and input/audio work;
+  no claim of VSH support is made yet.

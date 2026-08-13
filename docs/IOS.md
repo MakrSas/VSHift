@@ -33,6 +33,13 @@ ELF header and `PT_LOAD` table, and records a conservative size-correlated
 SELF-to-ELF map in the manifest. It does not perform payload decryption or
 claim to boot the PS5 shell yet.
 
+The `Import decrypted firmware folder` button is the next Safe Mode path. It
+expects the unpacked firmware root used by RPCSX: `mini-syscore.elf` at the
+root and the required libraries under `system/common/lib/`. It also reports
+whether optional `vsh/` or Safe Mode paths are present. The probe checks this
+layout and writes a preflight result to the manifest; it does not yet execute
+the guest.
+
 After a successful import, tap `Export manifest to Files` and choose a folder
 in the iOS Files app. The exported `firmware-manifest.json` contains only
 container and public-header metadata.

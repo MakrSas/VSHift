@@ -62,6 +62,8 @@ but the repository does not bundle firmware or keys.
 - [x] Parse bounded PS5 SELF headers and embedded ELF tables
 - [x] Correlate SELF payload entries with ELF `PT_LOAD` sizes
 - [ ] Decrypt and map real SELF payload bytes
+- [x] Add unpacked firmware-root Safe Mode preflight
+- [ ] Add file-backed guest VFS for a user-selected firmware root
 
 ## Milestone 4 — PS5 HLE foundation
 

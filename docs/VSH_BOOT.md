@@ -39,4 +39,7 @@ The iOS probe also validates the decrypted PUP segment table, finds the PS5 SELF
 candidate, parses its embedded ELF header and `PT_LOAD` table, and exports a
 conservative size-based payload map. Sparse guest-memory mapping currently
 remains limited to the synthetic ELF fixture; real SELF payload decryption and
-execution remain future work.
+execution remain future work. A firmware-root picker now checks the same
+minimum Safe Mode layout that RPCSX documents (`mini-syscore.elf` plus
+`system/common/lib`); optional `vsh` and Safe Mode paths are reported
+separately. This is a preflight boundary, not execution.

@@ -19,6 +19,7 @@
 @property(nonatomic, strong) UIButton *exportManifestButton;
 @property(nonatomic, strong) NSURL *manifestURL;
 @property(nonatomic, assign) BOOL pickingDecryptedFirmware;
+@property(nonatomic, assign) BOOL pickingFirmwareRoot;
 @end
 
 @implementation VSHiftJITViewController
@@ -137,6 +138,18 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
                          action:@selector(importDecryptedFirmware)
                forControlEvents:UIControlEventTouchUpInside];
 
+    UIButtonConfiguration *rootConfiguration =
+        [UIButtonConfiguration grayButtonConfiguration];
+    rootConfiguration.title = @"Import decrypted firmware folder";
+    rootConfiguration.image = [UIImage systemImageNamed:@"folder.badge.gearshape"];
+    rootConfiguration.imagePadding = 8.0;
+    rootConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    UIButton *rootButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    rootButton.configuration = rootConfiguration;
+    [rootButton addTarget:self
+                   action:@selector(importFirmwareRoot)
+         forControlEvents:UIControlEventTouchUpInside];
+
     UIButtonConfiguration *exportConfiguration =
         [UIButtonConfiguration tintedButtonConfiguration];
     exportConfiguration.title = @"Export manifest to Files";
@@ -155,7 +168,8 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     firmwareCard.layer.cornerRadius = 24.0;
     firmwareCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
     UIStackView *firmwareStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        firmwareHeader, importButton, decryptedButton, self.exportManifestButton
+        firmwareHeader, importButton, decryptedButton, rootButton,
+        self.exportManifestButton
     ]];
     firmwareStack.axis = UILayoutConstraintAxisVertical;
     firmwareStack.spacing = 12.0;
@@ -236,6 +250,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 
 - (void)importFirmware {
     self.pickingDecryptedFirmware = NO;
+    self.pickingFirmwareRoot = NO;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
             initForOpeningContentTypes:@[UTTypeData]
@@ -247,9 +262,22 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 
 - (void)importDecryptedFirmware {
     self.pickingDecryptedFirmware = YES;
+    self.pickingFirmwareRoot = NO;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
             initForOpeningContentTypes:@[UTTypeData]
+                                 asCopy:NO];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)importFirmwareRoot {
+    self.pickingDecryptedFirmware = NO;
+    self.pickingFirmwareRoot = YES;
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc]
+            initForOpeningContentTypes:@[UTTypeFolder]
                                  asCopy:NO];
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
@@ -298,6 +326,102 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         static_cast<unsigned long long>(report.entry),
         static_cast<int>(report.mapped_segments),
         report.result];
+}
+
+- (void)inspectFirmwareRootAtURL:(NSURL *)url {
+    const BOOL accessed = [url startAccessingSecurityScopedResource];
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSArray<NSString *> *requiredPaths = @[
+        @"mini-syscore.elf",
+        @"system/common/lib/libkernel_sys.sprx",
+        @"system/common/lib/libSceLibcInternal.sprx",
+        @"system/common/lib/libkernel.sprx",
+    ];
+    NSArray<NSString *> *optionalPaths = @[
+        @"vsh",
+        @"safe_mode",
+    ];
+    NSMutableArray *requiredFound = [NSMutableArray array];
+    NSMutableArray *optionalFound = [NSMutableArray array];
+    NSMutableArray *missingRequired = [NSMutableArray array];
+    NSMutableArray *missingOptional = [NSMutableArray array];
+    void (^inspectPath)(NSString *, NSMutableArray *, NSMutableArray *) =
+        ^(NSString *relativePath, NSMutableArray *found, NSMutableArray *missing) {
+        NSURL *candidate = [url URLByAppendingPathComponent:relativePath];
+        BOOL isDirectory = NO;
+        const BOOL exists = [fileManager fileExistsAtPath:candidate.path
+                                             isDirectory:&isDirectory];
+        if (exists) {
+            NSDictionary *attributes =
+                [fileManager attributesOfItemAtPath:candidate.path error:nil];
+            [found addObject:@{
+                @"path": relativePath,
+                @"kind": isDirectory ? @"directory" : @"file",
+                @"size": attributes[NSFileSize] ?: @0,
+            }];
+        } else {
+            [missing addObject:relativePath];
+        }
+    };
+    for (NSString *relativePath in requiredPaths) {
+        inspectPath(relativePath, requiredFound, missingRequired);
+    }
+    for (NSString *relativePath in optionalPaths) {
+        inspectPath(relativePath, optionalFound, missingOptional);
+    }
+    NSMutableArray *found = [requiredFound mutableCopy];
+    [found addObjectsFromArray:optionalFound];
+    const BOOL requiredPathsPresent = missingRequired.count == 0;
+
+    NSDictionary *manifest = @{
+        @"schema_version": @3,
+        @"source_file_name": url.lastPathComponent ?: @"firmware-root",
+        @"source_kind": @"user-provided decrypted firmware root",
+        @"boot_profile": @"RPCSX-compatible Safe Mode preflight",
+        @"root_path": url.path ?: @"",
+        @"required_paths": requiredPaths,
+        @"optional_paths": optionalPaths,
+        @"found": found,
+        @"required_found": requiredFound,
+        @"optional_found": optionalFound,
+        @"missing_required": missingRequired,
+        @"missing_optional": missingOptional,
+        @"boot_status": requiredPathsPresent
+            ? @"Safe Mode root preflight passed; guest execution pending"
+            : @"Safe Mode root is incomplete",
+    };
+
+    if (accessed) {
+        [url stopAccessingSecurityScopedResource];
+    }
+
+    NSError *manifestError = nil;
+    const BOOL manifestSaved = [self writeManifest:manifest error:&manifestError];
+    NSMutableString *summary = [NSMutableString stringWithFormat:
+        @"FIRMWARE ROOT\n%@\nFound: %lu/%lu required paths",
+        url.lastPathComponent ?: @"firmware-root",
+        static_cast<unsigned long>(requiredFound.count),
+        static_cast<unsigned long>(requiredPaths.count)];
+    for (NSDictionary *item in requiredFound) {
+        [summary appendFormat:@"\n✓ %@", item[@"path"]];
+    }
+    if (missingRequired.count > 0) {
+        [summary appendFormat:@"\nMissing required: %@",
+            [missingRequired componentsJoinedByString:@", "]];
+    }
+    if (missingOptional.count > 0) {
+        [summary appendFormat:@"\nOptional not present: %@",
+            [missingOptional componentsJoinedByString:@", "]];
+    }
+    [summary appendFormat:@"\n%@\n%@",
+        requiredPathsPresent
+            ? @"Safe Mode preflight passed; next stage is SELF payload mapping"
+            : @"Safe Mode preflight incomplete; choose the extracted firmware root",
+        manifestSaved
+            ? @"Manifest saved."
+            : [NSString stringWithFormat:@"Manifest save failed: %@",
+                manifestError.localizedDescription ?: @"unknown error"]];
+    self.statusLabel.text = summary;
 }
 
 - (void)inspectDecryptedFirmwareAtURL:(NSURL *)url {
@@ -663,6 +787,12 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     if (self.pickingDecryptedFirmware) {
         self.pickingDecryptedFirmware = NO;
         [self inspectDecryptedFirmwareAtURL:url];
+        return;
+    }
+
+    if (self.pickingFirmwareRoot) {
+        self.pickingFirmwareRoot = NO;
+        [self inspectFirmwareRootAtURL:url];
         return;
     }
 
