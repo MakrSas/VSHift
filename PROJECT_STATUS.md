@@ -55,7 +55,8 @@ validate the executable-memory/signing path before larger CPU work starts.
 3. Add versioned manifest storage and a read-only firmware filesystem.
 4. Add IR and a guest register/flags model while keeping the firmware parser
    independent from CPU execution.
-5. Add a synthetic PS5 ELF/SELF header fixture and safe program-header parser.
+5. Add a JIT-less IR interpreter for firmware and CPU experiments without
+   executable memory.
 
 ## Important commands
 

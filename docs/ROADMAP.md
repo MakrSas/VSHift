@@ -27,6 +27,18 @@ Add an explicit guest register file, flags, stack model, branches, calls,
 memory operands, and a demand-driven instruction coverage test suite. Do not
 start with all of x86-64 or AVX.
 
+### JIT-less experimental mode
+
+Keep a first-class interpreter path alongside the ARM64 JIT. It should execute
+the same IR without `ExecutableMemory`, so decoder, flags, loader, and
+firmware-boot experiments can run on devices or CI environments where JIT is
+unavailable. This is a correctness/debug mode, not the performance path.
+
+- [ ] Add an IR interpreter with explicit guest state
+- [ ] Make JIT and interpreter share instruction semantics
+- [ ] Add differential tests comparing interpreter and ARM64 JIT results
+- [ ] Expose a runtime `JIT` / `JIT-less` execution setting
+
 ## Milestone 2a — Firmware container inspection
 
 - [x] Parse the PS5 `SLB2` outer container header and file table

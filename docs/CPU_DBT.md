@@ -20,6 +20,8 @@ or host instruction encoding.
 ## Planned execution model
 
 - Decode one guest basic block at a time.
+- Lower blocks to a shared IR that can run either in the ARM64 JIT or in a
+  JIT-less interpreter.
 - Terminate blocks at direct/indirect control flow, calls, returns, faults, or
   unsupported instructions.
 - Cache blocks by guest address plus a code-page generation counter.
@@ -28,6 +30,14 @@ or host instruction encoding.
 - Keep guest flags explicit; do not rely on host NZCV state surviving arbitrary
   calls.
 - Add SSE/AVX only when firmware or a test ELF demonstrates demand.
+
+## JIT-less experimental mode
+
+The interpreter is a deliberate second execution backend. It avoids executable
+memory and is intended for deterministic instruction/loader/firmware tests,
+debugging unsupported operations, and environments where StikDebug or another
+JIT enabler is unavailable. Both backends must consume the same guest state and
+IR semantics so the interpreter can serve as a reference implementation.
 
 ## iOS executable memory contract
 
