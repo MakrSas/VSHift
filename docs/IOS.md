@@ -16,13 +16,21 @@ machine.
    intentionally rejects that legacy breakpoint.
 4. Activate JIT and launch `VSHiftJITProbe` from StikDebug. On iOS 26+, keep
    `Always Run Scripts` enabled if the app is not automatically recognized.
-5. Verify `ARM64 JIT result: 42`.
+5. Tap `Run synthetic boot (JIT)` once and verify `BOOT OK` with result `42`.
+   The current probe does not allocate JIT memory during app startup, so the
+   single breakpoint handled by `legacy.js` is reserved for this test.
 
 The current probe also has an `Import PS5UPDATE.PUP` button. Select the
 user-provided official PUP from Files; the app reads only the SLB2 header and
 file table plus the public prefix of the first non-empty PUP fragment. It shows
 the first component names and saves a metadata-only manifest in Application
 Support. It does not copy, decrypt, or mount firmware yet.
+
+The `Import decrypted PUP (.dec)` button accepts a user-provided decrypted
+component such as `PS5UPDATE1.PUP.dec`. It reads only the public PUP/SELF
+header, records its size and header metadata in the manifest, and reports that
+the file is ready for the next SELF/ELF loader step. It does not perform
+decryption, distribute Sony files, or claim to boot the PS5 shell yet.
 
 After a successful import, tap `Export manifest to Files` and choose a folder
 in the iOS Files app. The exported `firmware-manifest.json` contains only

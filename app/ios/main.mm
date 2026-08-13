@@ -17,6 +17,7 @@
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UIButton *exportManifestButton;
 @property(nonatomic, strong) NSURL *manifestURL;
+@property(nonatomic, assign) BOOL pickingDecryptedFirmware;
 @end
 
 @implementation VSHiftJITViewController
@@ -31,26 +32,8 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    constexpr std::uint8_t program[] = {
-        0xB8, 0x28, 0x00, 0x00, 0x00,
-        0x83, 0xC0, 0x02,
-        0xC3,
-    };
-    const auto decoded = vshift::cpu::Decode(program);
-    const auto compiled = vshift::cpu::Arm64Jit::Compile(decoded.instructions);
-
-    std::uint32_t result = 0;
-    const bool executed = compiled.ok() && compiled.jit->Execute(result);
-    NSString *message = nil;
-    if (executed) {
-        message = [NSString stringWithFormat:@"ARM64 JIT result: %u", result];
-    } else if (!compiled.ok()) {
-        message = [NSString stringWithFormat:
-            @"JIT memory setup failed: %@\nCheck signing/JIT entitlement.",
-            [NSString stringWithUTF8String:compiled.error.c_str()]];
-    } else {
-        message = @"JIT compiled but did not execute on this architecture.";
-    }
+    NSString *message =
+        @"JIT test is manual. Enable JIT in StikDebug, then run synthetic boot.";
 
     self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
 
@@ -136,6 +119,18 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
                      action:@selector(importFirmware)
            forControlEvents:UIControlEventTouchUpInside];
 
+    UIButtonConfiguration *decryptedConfiguration =
+        [UIButtonConfiguration grayButtonConfiguration];
+    decryptedConfiguration.title = @"Import decrypted PUP (.dec)";
+    decryptedConfiguration.image = [UIImage systemImageNamed:@"lock.open.doc"];
+    decryptedConfiguration.imagePadding = 8.0;
+    decryptedConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    UIButton *decryptedButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    decryptedButton.configuration = decryptedConfiguration;
+    [decryptedButton addTarget:self
+                         action:@selector(importDecryptedFirmware)
+               forControlEvents:UIControlEventTouchUpInside];
+
     UIButtonConfiguration *exportConfiguration =
         [UIButtonConfiguration tintedButtonConfiguration];
     exportConfiguration.title = @"Export manifest to Files";
@@ -154,7 +149,7 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     firmwareCard.layer.cornerRadius = 24.0;
     firmwareCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
     UIStackView *firmwareStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        firmwareHeader, importButton, self.exportManifestButton
+        firmwareHeader, importButton, decryptedButton, self.exportManifestButton
     ]];
     firmwareStack.axis = UILayoutConstraintAxisVertical;
     firmwareStack.spacing = 12.0;
@@ -234,10 +229,22 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
 }
 
 - (void)importFirmware {
+    self.pickingDecryptedFirmware = NO;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
             initForOpeningContentTypes:@[UTTypeData]
             asCopy:NO];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)importDecryptedFirmware {
+    self.pickingDecryptedFirmware = YES;
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc]
+            initForOpeningContentTypes:@[UTTypeData]
+                                 asCopy:NO];
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
     [self presentViewController:picker animated:YES completion:nil];
@@ -287,6 +294,102 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
         report.result];
 }
 
+- (void)inspectDecryptedFirmwareAtURL:(NSURL *)url {
+    const BOOL accessed = [url startAccessingSecurityScopedResource];
+    NSError *attributesError = nil;
+    NSDictionary *attributes =
+        [[NSFileManager defaultManager] attributesOfItemAtPath:url.path
+                                                          error:&attributesError];
+    NSNumber *fileSizeNumber = attributes[NSFileSize];
+    const auto fileSize = fileSizeNumber != nil
+                              ? fileSizeNumber.unsignedLongLongValue
+                              : 0;
+    if (attributesError != nil ||
+        fileSize < vshift::firmware::kPupFragmentPublicHeaderSize) {
+        self.statusLabel.text =
+            @"Decrypted PUP is too small or unreadable.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    NSError *openError = nil;
+    NSFileHandle *handle =
+        [NSFileHandle fileHandleForReadingFromURL:url error:&openError];
+    if (handle == nil) {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"Could not open decrypted PUP: %@",
+            openError.localizedDescription ?: @"unknown error"];
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    NSData *headerData =
+        [handle readDataOfLength:vshift::firmware::kPupFragmentPublicHeaderSize];
+    [handle closeFile];
+    if (headerData.length < vshift::firmware::kPupFragmentPublicHeaderSize) {
+        self.statusLabel.text = @"Could not read decrypted PUP header.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    const auto *headerBytes =
+        static_cast<const std::uint8_t *>(headerData.bytes);
+    const auto parsed = vshift::firmware::ParsePupFragmentHeader(
+        std::span<const std::uint8_t>(headerBytes, headerData.length));
+    if (!parsed.ok()) {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"Decrypted PUP header failed:\n%s", parsed.error.c_str()];
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    NSDictionary *manifest = @{
+        @"schema_version": @2,
+        @"source_file_name": url.lastPathComponent ?: @"PS5UPDATE1.PUP.dec",
+        @"source_kind": @"user-provided decrypted component",
+        @"container_format": @"PS5 PUP/SELF public header",
+        @"container_size": @(fileSize),
+        @"decrypted": @YES,
+        @"public_header": @{
+            @"magic": [NSString stringWithFormat:@"0x%08x",
+                        parsed.header.magic],
+            @"version": @(parsed.header.version),
+            @"mode": @(parsed.header.mode),
+            @"endian": @(parsed.header.endian),
+            @"attributes": @(parsed.header.attributes),
+            @"key_type": @(parsed.header.key_type),
+            @"header_size": @(parsed.header.header_size),
+            @"metadata_size": @(parsed.header.metadata_size),
+        },
+        @"boot_status": @"header validated; SELF/ELF loader pending",
+    };
+
+    if (accessed) {
+        [url stopAccessingSecurityScopedResource];
+    }
+
+    NSError *manifestError = nil;
+    const BOOL manifestSaved = [self writeManifest:manifest error:&manifestError];
+    self.statusLabel.text = [NSString stringWithFormat:
+        @"DECRYPTED PUP READY\n%@\nSize: %llu bytes\nMagic: 0x%08x\nHeader: 0x%x\n%@",
+        url.lastPathComponent ?: @"PS5UPDATE1.PUP.dec",
+        static_cast<unsigned long long>(fileSize),
+        parsed.header.magic,
+        parsed.header.header_size,
+        manifestSaved
+            ? @"Manifest saved. SELF/ELF boot is the next loader step."
+            : [NSString stringWithFormat:@"Manifest save failed: %@",
+                manifestError.localizedDescription ?: @"unknown error"]];
+}
+
 - (BOOL)writeManifest:(NSDictionary *)manifest error:(NSError **)error {
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSURL *applicationSupport =
@@ -334,6 +437,12 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     (void)controller;
     NSURL *url = urls.firstObject;
     if (url == nil) {
+        return;
+    }
+
+    if (self.pickingDecryptedFirmware) {
+        self.pickingDecryptedFirmware = NO;
+        [self inspectDecryptedFirmwareAtURL:url];
         return;
     }
 
