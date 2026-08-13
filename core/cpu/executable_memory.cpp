@@ -124,7 +124,7 @@ bool AllocateSplitWx(std::size_t size,
     mach_vm_address_t rx_address = 0;
     vm_prot_t current_protection = VM_PROT_DEFAULT;
     vm_prot_t max_protection = VM_PROT_DEFAULT;
-    const auto remap_result = ::mach_vm_remap(
+    const auto remap_result = mach_vm_remap(
         mach_task_self(), &rx_address, size, 0, VM_FLAGS_ANYWHERE,
         mach_task_self(), reinterpret_cast<mach_vm_address_t>(rw), false,
         &current_protection, &max_protection, VM_INHERIT_NONE);
