@@ -18,7 +18,8 @@ user-supplied material are clear.
 
 ## First inspection milestone
 
-PS5 update packages use an outer `SLB2` container. The read-only
+PS5 update packages use an outer `SLB2` container. Its table entries contain a
+32-byte component name followed by a start sector and byte size. The read-only
 `vshift_firmware_inspect` tool parses only the header and file table, validates
 that every listed file stays inside the user-selected container, and prints
 component names, offsets, and sizes. It does not decrypt, extract, modify, or

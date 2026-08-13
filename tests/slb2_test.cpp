@@ -42,14 +42,14 @@ int main() {
     WriteU32LE(table, 0x10, 0x80);
 
     const auto first = vshift::firmware::kSlb2HeaderSize;
-    WriteU32LE(table, first + 0x00, 4);
-    WriteU32LE(table, first + 0x04, 0x1234);
-    WriteName(table, first + 0x10, "system_b");
+    WriteU32LE(table, first + 0x20, 4);
+    WriteU32LE(table, first + 0x24, 0x1234);
+    WriteName(table, first + 0x00, "system_b");
 
     const auto second = first + vshift::firmware::kSlb2EntrySize;
-    WriteU32LE(table, second + 0x00, 20);
-    WriteU32LE(table, second + 0x04, 0x5678);
-    WriteName(table, second + 0x10, "system_ex_b");
+    WriteU32LE(table, second + 0x20, 20);
+    WriteU32LE(table, second + 0x24, 0x5678);
+    WriteName(table, second + 0x00, "system_ex_b");
 
     const auto parsed = vshift::firmware::ParseSlb2Table(table, 0x20000);
     assert(parsed.ok());

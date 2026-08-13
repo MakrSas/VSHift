@@ -71,8 +71,11 @@ Slb2ParseResult ParseSlb2Table(std::span<const std::uint8_t> table_bytes,
     for (std::uint32_t index = 0; index < entry_count; ++index) {
         const auto* entry = table_bytes.data() + kSlb2HeaderSize +
                             static_cast<std::size_t>(index) * kSlb2EntrySize;
-        const auto start_sector = ReadU32LE(entry + 0x00);
-        const auto file_size = ReadU32LE(entry + 0x04);
+        // PS5's outer SLB2 table stores the file name first, followed by the
+        // start sector and byte size. This differs from some older SLB2
+        // descriptions that show the numeric fields before the name.
+        const auto start_sector = ReadU32LE(entry + 0x20);
+        const auto file_size = ReadU32LE(entry + 0x24);
         const auto offset = static_cast<std::uint64_t>(start_sector) *
                             kSlb2SectorSize;
 
@@ -83,7 +86,7 @@ Slb2ParseResult ParseSlb2Table(std::span<const std::uint8_t> table_bytes,
             return result;
         }
 
-        const auto* name_begin = reinterpret_cast<const char*>(entry + 0x10);
+        const auto* name_begin = reinterpret_cast<const char*>(entry + 0x00);
         const auto* name_end = std::find(name_begin, name_begin + 0x20, '\0');
         if (name_end == name_begin + 0x20) {
             result.error = "SLB2 entry name is not NUL terminated";
