@@ -1,0 +1,9 @@
+/build/
+/build-*/
+/.vs/
+/.idea/
+DerivedData/
+*.xcuserstate
+*.ipa
+*.dSYM/
+.DS_Store

@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host:
+    name: Host build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVSHIFT_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  ios-simulator:
+    name: iOS simulator compile
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Xcode project
+        run: >-
+          cmake -S . -B build-ios -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_SYSROOT=iphonesimulator
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DVSHIFT_BUILD_IOS=ON
+          -DVSHIFT_BUILD_TESTS=OFF
+      - name: Build unsigned simulator app
+        run: >-
+          cmake --build build-ios --config Release
+          --target vshift_ios_jit_probe
+          --
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+      - name: Upload simulator bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: vshift-ios-simulator
+          path: build-ios/Release-iphonesimulator/vshift_ios_jit_probe.app
