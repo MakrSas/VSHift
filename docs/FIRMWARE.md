@@ -31,7 +31,14 @@ Example:
 vshift_firmware_inspect PS5UPDATE.PUP
 ```
 
-This is intentionally the first real-firmware test. The iOS probe now also
+This is intentionally the first real-firmware test. The repository also
+contains `tools/extract_pup_entries.py`, a local helper for expanding a
+previously decrypted `.PUP.dec` into its component images. It does not
+decrypt an official PUP. The large `ssd0.system_b` and `ssd0.system_ex_b`
+components are exFAT images and require a separate read-only filesystem
+extractor to materialize the firmware root.
+
+The iOS probe now also
 reads the first `0x10` public bytes of the first non-empty PUP fragment. A
 `0xEEF51454` magic identifies the PS5 PUP/SELF payload; the remaining `0x10`
 bytes of its nominal header and all segment metadata remain encrypted and are

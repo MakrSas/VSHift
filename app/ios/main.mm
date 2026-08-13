@@ -332,18 +332,25 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     const BOOL accessed = [url startAccessingSecurityScopedResource];
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSArray<NSString *> *requiredPaths = @[
-        @"mini-syscore.elf",
         @"system/common/lib/libkernel_sys.sprx",
         @"system/common/lib/libSceLibcInternal.sprx",
         @"system/common/lib/libkernel.sprx",
     ];
+    NSArray<NSString *> *bootEntryCandidates = @[
+        // RPCSX-compatible extracted roots use this synthetic Safe Mode name.
+        @"mini-syscore.elf",
+        // A real PS5 system root stores the system core under /system/sys.
+        @"system/sys/SceSysCore.elf",
+    ];
     NSArray<NSString *> *optionalPaths = @[
-        @"vsh",
-        @"safe_mode",
+        @"system/vsh/SceShellCore.elf",
+        @"system_ex",
     ];
     NSMutableArray *requiredFound = [NSMutableArray array];
+    NSMutableArray *bootEntryFound = [NSMutableArray array];
     NSMutableArray *optionalFound = [NSMutableArray array];
     NSMutableArray *missingRequired = [NSMutableArray array];
+    NSMutableArray *missingBootEntries = [NSMutableArray array];
     NSMutableArray *missingOptional = [NSMutableArray array];
     void (^inspectPath)(NSString *, NSMutableArray *, NSMutableArray *) =
         ^(NSString *relativePath, NSMutableArray *found, NSMutableArray *missing) {
@@ -366,12 +373,17 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     for (NSString *relativePath in requiredPaths) {
         inspectPath(relativePath, requiredFound, missingRequired);
     }
+    for (NSString *relativePath in bootEntryCandidates) {
+        inspectPath(relativePath, bootEntryFound, missingBootEntries);
+    }
     for (NSString *relativePath in optionalPaths) {
         inspectPath(relativePath, optionalFound, missingOptional);
     }
     NSMutableArray *found = [requiredFound mutableCopy];
+    [found addObjectsFromArray:bootEntryFound];
     [found addObjectsFromArray:optionalFound];
-    const BOOL requiredPathsPresent = missingRequired.count == 0;
+    const BOOL requiredPathsPresent =
+        missingRequired.count == 0 && bootEntryFound.count > 0;
 
     NSDictionary *manifest = @{
         @"schema_version": @3,
@@ -380,14 +392,17 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         @"boot_profile": @"RPCSX-compatible Safe Mode preflight",
         @"root_path": url.path ?: @"",
         @"required_paths": requiredPaths,
+        @"boot_entry_candidates": bootEntryCandidates,
         @"optional_paths": optionalPaths,
         @"found": found,
         @"required_found": requiredFound,
+        @"boot_entry_found": bootEntryFound,
         @"optional_found": optionalFound,
         @"missing_required": missingRequired,
+        @"missing_boot_entries": missingBootEntries,
         @"missing_optional": missingOptional,
         @"boot_status": requiredPathsPresent
-            ? @"Safe Mode root preflight passed; guest execution pending"
+            ? @"PS5 firmware root preflight passed; guest execution pending"
             : @"Safe Mode root is incomplete",
     };
 
@@ -409,13 +424,21 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         [summary appendFormat:@"\nMissing required: %@",
             [missingRequired componentsJoinedByString:@", "]];
     }
+    if (bootEntryFound.count > 0) {
+        for (NSDictionary *item in bootEntryFound) {
+            [summary appendFormat:@"\n✓ Boot entry: %@", item[@"path"]];
+        }
+    } else {
+        [summary appendFormat:@"\nMissing boot entry: %@",
+            [bootEntryCandidates componentsJoinedByString:@" or "]];
+    }
     if (missingOptional.count > 0) {
         [summary appendFormat:@"\nOptional not present: %@",
             [missingOptional componentsJoinedByString:@", "]];
     }
     [summary appendFormat:@"\n%@\n%@",
         requiredPathsPresent
-            ? @"Safe Mode preflight passed; next stage is SELF payload mapping"
+            ? @"PS5 firmware root preflight passed; next stage is SELF payload mapping"
             : @"Safe Mode preflight incomplete; choose the extracted firmware root",
         manifestSaved
             ? @"Manifest saved."

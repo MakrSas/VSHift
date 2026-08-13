@@ -34,9 +34,10 @@ SELF-to-ELF map in the manifest. It does not perform payload decryption or
 claim to boot the PS5 shell yet.
 
 The `Import decrypted firmware folder` button is the next Safe Mode path. It
-expects the unpacked firmware root used by RPCSX: `mini-syscore.elf` at the
-root and the required libraries under `system/common/lib/`. It also reports
-whether optional `vsh/` or Safe Mode paths are present. The probe checks this
+accepts the RPCSX-style `mini-syscore.elf` root or the real PS5 layout with
+`system/sys/SceSysCore.elf`. In both cases it checks the required libraries
+under `system/common/lib/` and reports the optional
+`system/vsh/SceShellCore.elf` and `system_ex/` content. The probe checks this
 layout and writes a preflight result to the manifest; it does not yet execute
 the guest.
 
