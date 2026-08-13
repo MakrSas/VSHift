@@ -4,8 +4,8 @@ Date: 2026-08-13
 
 ## Current milestone
 
-Milestone 0 in progress; Milestone 1 PoC implemented and awaiting build plus
-physical iPhone verification.
+Milestone 0 complete; Milestone 1 PoC is CI-verified and awaiting physical
+iPhone verification.
 
 ## Working
 
@@ -23,6 +23,8 @@ physical iPhone verification.
   verified against the official SHA-256 file.
 - Local CMake configuration is intentionally deferred; GitHub Actions is the
   source of truth for the first host and iOS builds.
+- GitHub Actions host tests and iOS simulator compilation passed on the pushed
+  branch.
 
 ## Not working yet
 
@@ -39,11 +41,11 @@ validate the executable-memory/signing path before larger CPU work starts.
 
 ## Next 5 actions
 
-1. Run host unit test and inspect emitted bytes.
-2. Verify the iOS simulator build in GitHub Actions.
-3. Produce a signed device artifact using the user's Apple signing setup.
-4. Run the PoC on iPhone 15 and record result/logs.
-5. Add IR and a guest register/flags model only after the device proof passes.
+1. Produce a signed device artifact using the user's Apple signing setup.
+2. Run the PoC on iPhone 15 and record result/logs.
+3. Add IR and a guest register/flags model only after the device proof passes.
+4. Add a guest register and flags model with focused unit tests.
+5. Add a demand-driven basic-block cache.
 
 ## Important commands
 
