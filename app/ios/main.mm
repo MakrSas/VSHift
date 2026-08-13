@@ -52,77 +52,187 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
         message = @"JIT compiled but did not execute on this architecture.";
     }
 
-    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
+
+    UIScrollView *scrollView = [[UIScrollView alloc] init];
+    scrollView.translatesAutoresizingMaskIntoConstraints = NO;
+    scrollView.alwaysBounceVertical = YES;
+    scrollView.showsVerticalScrollIndicator = NO;
+    [self.view addSubview:scrollView];
+
+    UIStackView *content = [[UIStackView alloc] init];
+    content.translatesAutoresizingMaskIntoConstraints = NO;
+    content.axis = UILayoutConstraintAxisVertical;
+    content.spacing = 20.0;
+    content.layoutMargins = UIEdgeInsetsMake(24.0, 20.0, 32.0, 20.0);
+    content.layoutMarginsRelativeArrangement = YES;
+    [scrollView addSubview:content];
+
+    UILabel *eyebrow = [[UILabel alloc] init];
+    eyebrow.text = @"VSHIFT LAB";
+    eyebrow.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    eyebrow.textColor = UIColor.secondaryLabelColor;
+    eyebrow.adjustsFontForContentSizeCategory = YES;
 
     UILabel *title = [[UILabel alloc] init];
-    title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"VSHift firmware probe";
-    title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
-    title.textAlignment = NSTextAlignmentCenter;
+    title.text = @"Firmware workspace";
+    title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle];
+    title.textColor = UIColor.labelColor;
+    title.adjustsFontForContentSizeCategory = YES;
+
+    UILabel *subtitle = [[UILabel alloc] init];
+    subtitle.text = @"Inspect a user-provided PUP and validate the boot path.";
+    subtitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    subtitle.textColor = UIColor.secondaryLabelColor;
+    subtitle.numberOfLines = 0;
+    subtitle.adjustsFontForContentSizeCategory = YES;
+
+    UIStackView *header = [[UIStackView alloc] initWithArrangedSubviews:@[
+        eyebrow, title, subtitle
+    ]];
+    header.axis = UILayoutConstraintAxisVertical;
+    header.spacing = 4.0;
+
+    UIView *statusCard = [[UIView alloc] init];
+    statusCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    statusCard.layer.cornerRadius = 24.0;
+    statusCard.layer.cornerCurve = kCACornerCurveContinuous;
+    statusCard.layoutMargins = UIEdgeInsetsMake(18.0, 18.0, 18.0, 18.0);
+
+    UILabel *statusTitle = [[UILabel alloc] init];
+    statusTitle.text = @"Runtime status";
+    statusTitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    statusTitle.adjustsFontForContentSizeCategory = YES;
 
     self.statusLabel = [[UILabel alloc] init];
-    self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.statusLabel.text = message;
-    self.statusLabel.textAlignment = NSTextAlignmentCenter;
     self.statusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    self.statusLabel.textColor = UIColor.secondaryLabelColor;
     self.statusLabel.numberOfLines = 0;
+    self.statusLabel.adjustsFontForContentSizeCategory = YES;
 
+    UIStackView *statusStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        statusTitle, self.statusLabel
+    ]];
+    statusStack.axis = UILayoutConstraintAxisVertical;
+    statusStack.spacing = 8.0;
+    statusStack.translatesAutoresizingMaskIntoConstraints = NO;
+    [statusCard addSubview:statusStack];
+
+    UILabel *firmwareHeader = [[UILabel alloc] init];
+    firmwareHeader.text = @"FIRMWARE";
+    firmwareHeader.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    firmwareHeader.textColor = UIColor.secondaryLabelColor;
+    firmwareHeader.adjustsFontForContentSizeCategory = YES;
+
+    UIButtonConfiguration importConfiguration =
+        [UIButtonConfiguration filledButtonConfiguration];
+    importConfiguration.title = @"Import PS5UPDATE.PUP";
+    importConfiguration.image = [UIImage systemImageNamed:@"arrow.down.doc"];
+    importConfiguration.imagePadding = 8.0;
+    importConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
     UIButton *importButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    importButton.translatesAutoresizingMaskIntoConstraints = NO;
-    [importButton setTitle:@"Import PS5UPDATE.PUP" forState:UIControlStateNormal];
-    importButton.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    importButton.configuration = importConfiguration;
     [importButton addTarget:self
                      action:@selector(importFirmware)
            forControlEvents:UIControlEventTouchUpInside];
 
+    UIButtonConfiguration exportConfiguration =
+        [UIButtonConfiguration tintedButtonConfiguration];
+    exportConfiguration.title = @"Export manifest to Files";
+    exportConfiguration.image = [UIImage systemImageNamed:@"square.and.arrow.up"];
+    exportConfiguration.imagePadding = 8.0;
+    exportConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
     self.exportManifestButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.exportManifestButton.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.exportManifestButton setTitle:@"Export manifest to Files"
-                               forState:UIControlStateNormal];
-    self.exportManifestButton.titleLabel.font =
-        [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    self.exportManifestButton.configuration = exportConfiguration;
     self.exportManifestButton.enabled = NO;
     [self.exportManifestButton addTarget:self
                                   action:@selector(exportManifest)
                         forControlEvents:UIControlEventTouchUpInside];
 
+    UIView *firmwareCard = [[UIView alloc] init];
+    firmwareCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    firmwareCard.layer.cornerRadius = 24.0;
+    firmwareCard.layer.cornerCurve = kCACornerCurveContinuous;
+    firmwareCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
+    UIStackView *firmwareStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        firmwareHeader, importButton, self.exportManifestButton
+    ]];
+    firmwareStack.axis = UILayoutConstraintAxisVertical;
+    firmwareStack.spacing = 12.0;
+    firmwareStack.translatesAutoresizingMaskIntoConstraints = NO;
+    [firmwareCard addSubview:firmwareStack];
+
+    UILabel *bootHeader = [[UILabel alloc] init];
+    bootHeader.text = @"BOOT LAB";
+    bootHeader.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    bootHeader.textColor = UIColor.secondaryLabelColor;
+    bootHeader.adjustsFontForContentSizeCategory = YES;
+
+    UIButtonConfiguration jitConfiguration =
+        [UIButtonConfiguration filledButtonConfiguration];
+    jitConfiguration.title = @"Run synthetic boot · JIT";
+    jitConfiguration.image = [UIImage systemImageNamed:@"bolt.fill"];
+    jitConfiguration.imagePadding = 8.0;
+    jitConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
     UIButton *syntheticJitButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    syntheticJitButton.translatesAutoresizingMaskIntoConstraints = NO;
-    [syntheticJitButton setTitle:@"Run synthetic boot (JIT)"
-                         forState:UIControlStateNormal];
-    syntheticJitButton.titleLabel.font =
-        [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    syntheticJitButton.configuration = jitConfiguration;
     [syntheticJitButton addTarget:self
                            action:@selector(runSyntheticJit)
                  forControlEvents:UIControlEventTouchUpInside];
 
-    UIButton *syntheticJitLessButton =
-        [UIButton buttonWithType:UIButtonTypeSystem];
-    syntheticJitLessButton.translatesAutoresizingMaskIntoConstraints = NO;
-    [syntheticJitLessButton setTitle:@"Run synthetic boot (JIT-less)"
-                             forState:UIControlStateNormal];
-    syntheticJitLessButton.titleLabel.font =
-        [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    UIButtonConfiguration jitLessConfiguration =
+        [UIButtonConfiguration grayButtonConfiguration];
+    jitLessConfiguration.title = @"Run synthetic boot · JIT-less";
+    jitLessConfiguration.image = [UIImage systemImageNamed:@"gauge.with.dots.needle.33percent"];
+    jitLessConfiguration.imagePadding = 8.0;
+    jitLessConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    UIButton *syntheticJitLessButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    syntheticJitLessButton.configuration = jitLessConfiguration;
     [syntheticJitLessButton addTarget:self
                                action:@selector(runSyntheticJitLess)
                      forControlEvents:UIControlEventTouchUpInside];
 
-    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        title, self.statusLabel, importButton, self.exportManifestButton,
-        syntheticJitButton, syntheticJitLessButton
+    UIView *bootCard = [[UIView alloc] init];
+    bootCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    bootCard.layer.cornerRadius = 24.0;
+    bootCard.layer.cornerCurve = kCACornerCurveContinuous;
+    bootCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
+    UIStackView *bootStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        bootHeader, syntheticJitButton, syntheticJitLessButton
     ]];
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
-    stack.axis = UILayoutConstraintAxisVertical;
-    stack.alignment = UIStackViewAlignmentFill;
-    stack.spacing = 20.0;
-    [self.view addSubview:stack];
+    bootStack.axis = UILayoutConstraintAxisVertical;
+    bootStack.spacing = 12.0;
+    bootStack.translatesAutoresizingMaskIntoConstraints = NO;
+    [bootCard addSubview:bootStack];
+
+    [content addArrangedSubview:header];
+    [content addArrangedSubview:statusCard];
+    [content addArrangedSubview:firmwareCard];
+    [content addArrangedSubview:bootCard];
 
     [NSLayoutConstraint activateConstraints:@[
-        [stack.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor
-                                             constant:24.0],
-        [stack.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor
-                                              constant:-24.0],
-        [stack.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [scrollView.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
+        [scrollView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [scrollView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [scrollView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [content.leadingAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.leadingAnchor],
+        [content.trailingAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.trailingAnchor],
+        [content.topAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.topAnchor],
+        [content.bottomAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.bottomAnchor],
+        [content.widthAnchor constraintEqualToAnchor:scrollView.frameLayoutGuide.widthAnchor],
+        [statusStack.leadingAnchor constraintEqualToAnchor:statusCard.layoutMarginsGuide.leadingAnchor],
+        [statusStack.trailingAnchor constraintEqualToAnchor:statusCard.layoutMarginsGuide.trailingAnchor],
+        [statusStack.topAnchor constraintEqualToAnchor:statusCard.layoutMarginsGuide.topAnchor],
+        [statusStack.bottomAnchor constraintEqualToAnchor:statusCard.layoutMarginsGuide.bottomAnchor],
+        [firmwareStack.leadingAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.leadingAnchor],
+        [firmwareStack.trailingAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.trailingAnchor],
+        [firmwareStack.topAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.topAnchor],
+        [firmwareStack.bottomAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.bottomAnchor],
+        [bootStack.leadingAnchor constraintEqualToAnchor:bootCard.layoutMarginsGuide.leadingAnchor],
+        [bootStack.trailingAnchor constraintEqualToAnchor:bootCard.layoutMarginsGuide.trailingAnchor],
+        [bootStack.topAnchor constraintEqualToAnchor:bootCard.layoutMarginsGuide.topAnchor],
+        [bootStack.bottomAnchor constraintEqualToAnchor:bootCard.layoutMarginsGuide.bottomAnchor],
     ]];
 }
 
