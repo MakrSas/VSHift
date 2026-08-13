@@ -40,7 +40,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     [super viewDidLoad];
 
     NSString *message =
-        @"JIT test is manual. Enable JIT in StikDebug, then run synthetic boot.";
+        @"PS4 VSH root is manual. Choose an extracted root, then run the boot test.";
 
     self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
 
@@ -65,13 +65,13 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     eyebrow.adjustsFontForContentSizeCategory = YES;
 
     UILabel *title = [[UILabel alloc] init];
-    title.text = @"Firmware workspace";
+    title.text = @"PS4 firmware workspace";
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle];
     title.textColor = UIColor.labelColor;
     title.adjustsFontForContentSizeCategory = YES;
 
     UILabel *subtitle = [[UILabel alloc] init];
-    subtitle.text = @"Inspect a user-provided PUP and validate the boot path.";
+    subtitle.text = @"Validate an extracted PS4 firmware root and VSH boot path.";
     subtitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     subtitle.textColor = UIColor.secondaryLabelColor;
     subtitle.numberOfLines = 0;
@@ -114,33 +114,9 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     firmwareHeader.textColor = UIColor.secondaryLabelColor;
     firmwareHeader.adjustsFontForContentSizeCategory = YES;
 
-    UIButtonConfiguration *importConfiguration =
-        [UIButtonConfiguration filledButtonConfiguration];
-    importConfiguration.title = @"Import PS5UPDATE.PUP";
-    importConfiguration.image = [UIImage systemImageNamed:@"arrow.down.doc"];
-    importConfiguration.imagePadding = 8.0;
-    importConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    UIButton *importButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    importButton.configuration = importConfiguration;
-    [importButton addTarget:self
-                     action:@selector(importFirmware)
-           forControlEvents:UIControlEventTouchUpInside];
-
-    UIButtonConfiguration *decryptedConfiguration =
-        [UIButtonConfiguration grayButtonConfiguration];
-    decryptedConfiguration.title = @"Import decrypted PUP (.dec)";
-    decryptedConfiguration.image = [UIImage systemImageNamed:@"lock.open.doc"];
-    decryptedConfiguration.imagePadding = 8.0;
-    decryptedConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    UIButton *decryptedButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    decryptedButton.configuration = decryptedConfiguration;
-    [decryptedButton addTarget:self
-                         action:@selector(importDecryptedFirmware)
-               forControlEvents:UIControlEventTouchUpInside];
-
     UIButtonConfiguration *rootConfiguration =
-        [UIButtonConfiguration grayButtonConfiguration];
-    rootConfiguration.title = @"Import decrypted firmware folder";
+        [UIButtonConfiguration filledButtonConfiguration];
+    rootConfiguration.title = @"Import extracted PS4 firmware root";
     rootConfiguration.image = [UIImage systemImageNamed:@"folder.badge.gearshape"];
     rootConfiguration.imagePadding = 8.0;
     rootConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
@@ -168,7 +144,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     firmwareCard.layer.cornerRadius = 24.0;
     firmwareCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
     UIStackView *firmwareStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        firmwareHeader, importButton, decryptedButton, rootButton,
+        firmwareHeader, rootButton,
         self.exportManifestButton
     ]];
     firmwareStack.axis = UILayoutConstraintAxisVertical;
@@ -337,14 +313,13 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         @"system/common/lib/libkernel.sprx",
     ];
     NSArray<NSString *> *bootEntryCandidates = @[
-        // RPCSX-compatible extracted roots use this synthetic Safe Mode name.
-        @"mini-syscore.elf",
-        // A real PS5 system root stores the system core under /system/sys.
+        // The PS4 system root stores the system core under /system/sys.
         @"system/sys/SceSysCore.elf",
     ];
     NSArray<NSString *> *optionalPaths = @[
         @"system/vsh/SceShellCore.elf",
         @"system_ex",
+        @"preinst",
     ];
     NSMutableArray *requiredFound = [NSMutableArray array];
     NSMutableArray *bootEntryFound = [NSMutableArray array];
@@ -388,8 +363,8 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     NSDictionary *manifest = @{
         @"schema_version": @3,
         @"source_file_name": url.lastPathComponent ?: @"firmware-root",
-        @"source_kind": @"user-provided decrypted firmware root",
-        @"boot_profile": @"RPCSX-compatible Safe Mode preflight",
+        @"source_kind": @"user-provided decrypted PS4 firmware root",
+        @"boot_profile": @"PS4 VSH preflight",
         @"root_path": url.path ?: @"",
         @"required_paths": requiredPaths,
         @"boot_entry_candidates": bootEntryCandidates,
@@ -402,7 +377,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         @"missing_boot_entries": missingBootEntries,
         @"missing_optional": missingOptional,
         @"boot_status": requiredPathsPresent
-            ? @"PS5 firmware root preflight passed; guest execution pending"
+            ? @"PS4 firmware root preflight passed; guest execution pending"
             : @"Safe Mode root is incomplete",
     };
 
@@ -438,7 +413,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     }
     [summary appendFormat:@"\n%@\n%@",
         requiredPathsPresent
-            ? @"PS5 firmware root preflight passed; next stage is SELF payload mapping"
+            ? @"PS4 firmware root preflight passed; next stage is SELF payload mapping"
             : @"Safe Mode preflight incomplete; choose the extracted firmware root",
         manifestSaved
             ? @"Manifest saved."

@@ -47,9 +47,9 @@ unavailable. This is a correctness/debug mode, not the performance path.
 - [x] Add an iOS document picker and read the firmware table on-device
 - [x] Persist a versioned metadata-only firmware manifest
 
-## Milestone 3 — PS5 ELF/SELF loader
+## Milestone 3 — PS4 ELF/SELF loader (`main`)
 
-Implement safe header parsing, PT_LOAD mapping, entry-point discovery, symbol
+Implement safe PS4 header parsing, PT_LOAD mapping, entry-point discovery, symbol
 metadata, and a firmware-independent synthetic ELF fixture. SELF decryption and
 key handling are runtime boundaries; the app may inspect user-provided material,
 but the repository does not bundle firmware or keys.
@@ -65,7 +65,7 @@ but the repository does not bundle firmware or keys.
 - [x] Add unpacked firmware-root Safe Mode preflight
 - [ ] Add file-backed guest VFS for a user-selected firmware root
 
-## Milestone 4 — PS5 HLE foundation
+## Milestone 4 — PS4 HLE foundation
 
 Add guest threads, synchronization, clocks, file I/O, virtual paths, and a
 small syscall/import registry. Host scheduling must not create one host thread
@@ -77,14 +77,14 @@ Start with a synthetic guest triangle and a renderer interface. Prefer the
 existing SPIR-V/MoltenVK path for the first frame; reserve a direct Metal shader
 path for measured bottlenecks.
 
-## Milestone 6 — Firmware manager
+## Milestone 6 — PS4 firmware manager
 
-Import a user-selected official `PS5UPDATE.PUP`, validate and version it, and
+Import a user-selected official `PS4UPDATE.PUP`, validate and version it, and
 extract only the components required by a declared boot profile. No firmware,
 keys, decrypted Sony files, or proprietary libraries are stored in this repo or
 the IPA.
 
-## Milestones 7–11 — Safe Mode, VSH, input, audio, sustained performance
+## Milestones 7–11 — PS4 Safe Mode, VSH, input, audio, sustained performance
 
 The order is Safe Mode before VSH, then touch/DualSense input, UI audio, and
 profiling. A 60 FPS target is measured rather than promised; the frame budget

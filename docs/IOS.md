@@ -20,26 +20,23 @@ machine.
    The current probe does not allocate JIT memory during app startup, so the
    single breakpoint handled by `legacy.js` is reserved for this test.
 
-The current probe also has an `Import PS5UPDATE.PUP` button. Select the
-user-provided official PUP from Files; the app reads only the SLB2 header and
-file table plus the public prefix of the first non-empty PUP fragment. It shows
-the first component names and saves a metadata-only manifest in Application
-Support. It does not copy, decrypt, or mount firmware yet.
+On `main`, the probe starts from a user-provided extracted PS4 root selected
+through Files. The PS5 SLB2/PUP inspection controls are intentionally not part
+of the active PS4 screen.
 
-The `Import decrypted PUP (.dec)` button accepts a user-provided decrypted
-component such as `PS5UPDATE1.PUP.dec`. It reads the fixed PUP header and
-bounded segment table, scans segment prefixes for PS5 SELF, parses the embedded
-ELF header and `PT_LOAD` table, and records a conservative size-correlated
-SELF-to-ELF map in the manifest. It does not perform payload decryption or
-claim to boot the PS5 shell yet.
+The low-level decrypted-PUP metadata importer is retained as inherited work;
+the active `main` UI does not expose it because it is PS5-specific. That
+inspection path remains available on the paused `ps5` branch. The active PS4
+path starts from the extracted firmware root described below.
 
-The `Import decrypted firmware folder` button is the next Safe Mode path. It
-accepts the RPCSX-style `mini-syscore.elf` root or the real PS5 layout with
-`system/sys/SceSysCore.elf`. In both cases it checks the required libraries
-under `system/common/lib/` and reports the optional
-`system/vsh/SceShellCore.elf` and `system_ex/` content. The probe checks this
-layout and writes a preflight result to the manifest; it does not yet execute
-the guest.
+On `main`, the `Import extracted PS4 firmware root` button is the active VSH
+path. It expects `system/sys/SceSysCore.elf`, the required libraries under
+`system/common/lib/`, and reports `system/vsh/SceShellCore.elf`, `system_ex/`,
+and `preinst/` when present. The probe checks this layout and writes a
+preflight result to the manifest; it does not yet execute the guest.
+
+The paused `ps5` branch retains the PS5 root preflight and decrypted-PUP
+inspection path.
 
 After a successful import, tap `Export manifest to Files` and choose a folder
 in the iOS Files app. The exported `firmware-manifest.json` contains only
