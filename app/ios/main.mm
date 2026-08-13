@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+#include "core/boot/synthetic_boot.h"
 #include "core/cpu/arm64_jit.h"
 #include "core/firmware/catalog.h"
 #include "core/firmware/pup.h"
@@ -85,8 +86,30 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
                                   action:@selector(exportManifest)
                         forControlEvents:UIControlEventTouchUpInside];
 
+    UIButton *syntheticJitButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    syntheticJitButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [syntheticJitButton setTitle:@"Run synthetic boot (JIT)"
+                         forState:UIControlStateNormal];
+    syntheticJitButton.titleLabel.font =
+        [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    [syntheticJitButton addTarget:self
+                           action:@selector(runSyntheticJit)
+                 forControlEvents:UIControlEventTouchUpInside];
+
+    UIButton *syntheticJitLessButton =
+        [UIButton buttonWithType:UIButtonTypeSystem];
+    syntheticJitLessButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [syntheticJitLessButton setTitle:@"Run synthetic boot (JIT-less)"
+                             forState:UIControlStateNormal];
+    syntheticJitLessButton.titleLabel.font =
+        [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    [syntheticJitLessButton addTarget:self
+                               action:@selector(runSyntheticJitLess)
+                     forControlEvents:UIControlEventTouchUpInside];
+
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        title, self.statusLabel, importButton, self.exportManifestButton
+        title, self.statusLabel, importButton, self.exportManifestButton,
+        syntheticJitButton, syntheticJitLessButton
     ]];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     stack.axis = UILayoutConstraintAxisVertical;
@@ -126,6 +149,35 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
                            asCopy:YES];
     picker.delegate = self;
     [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)runSyntheticJit {
+    [self runSyntheticBootWithMode:vshift::boot::ExecutionMode::Jit];
+}
+
+- (void)runSyntheticJitLess {
+    [self runSyntheticBootWithMode:vshift::boot::ExecutionMode::JitLess];
+}
+
+- (void)runSyntheticBootWithMode:(vshift::boot::ExecutionMode)mode {
+    const auto image = vshift::boot::BuildSyntheticElfFixture();
+    const auto report = vshift::boot::RunSyntheticElfBoot(image, mode);
+    NSString *modeName = mode == vshift::boot::ExecutionMode::Jit
+                             ? @"JIT"
+                             : @"JIT-less";
+    if (!report.ok()) {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"SYNTHETIC BOOT FAILED (%@)\n%s", modeName,
+            report.error.c_str()];
+        return;
+    }
+
+    self.statusLabel.text = [NSString stringWithFormat:
+        @"BOOT OK\nSynthetic ELF\nMode: %@\nEntry: 0x%llx\nSegments: %d\nResult: %u",
+        modeName,
+        static_cast<unsigned long long>(report.entry),
+        static_cast<int>(report.mapped_segments),
+        report.result];
 }
 
 - (BOOL)writeManifest:(NSDictionary *)manifest error:(NSError **)error {

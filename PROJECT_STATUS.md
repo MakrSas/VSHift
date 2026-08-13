@@ -43,7 +43,9 @@ header probe, and metadata-only manifest storage.
 - Added sparse guest memory and synthetic `PT_LOAD` mapping with zero-filled
   BSS behavior and permission-aware guest reads/writes.
 - Added a shared IR plus JIT-less interpreter for the current `mov/add/ret`
-  subset; the runtime UI switch is intentionally still pending.
+  subset; a persistent runtime mode setting is intentionally still pending.
+- Added a synthetic ELF boot session and iOS buttons for JIT/JIT-less boot
+  reports; this is a firmware-independent pipeline, not real VSH.
 
 ## Not working yet
 
@@ -63,8 +65,8 @@ validate the executable-memory/signing path before larger CPU work starts.
 1. Download the new device IPA and update the existing installation with
    iLoader.
 2. Use `Import PS5UPDATE.PUP` and record the nested public header and manifest.
-3. Add a mapped-segment report and synthetic guest entry-point check.
-4. Add IR and a guest register/flags model while keeping the firmware parser
+3. Add differential tests comparing interpreter and ARM64 JIT results.
+4. Add more IR operations and a guest register/flags model while keeping the firmware parser
    independent from CPU execution.
 5. Add a JIT-less IR interpreter for firmware and CPU experiments without
    executable memory.

@@ -28,6 +28,12 @@ After a successful import, tap `Export manifest to Files` and choose a folder
 in the iOS Files app. The exported `firmware-manifest.json` contains only
 container and public-header metadata.
 
+The probe also has two synthetic boot buttons. `Run synthetic boot (JIT)` and
+`Run synthetic boot (JIT-less)` load a bundled firmware-independent ELF fixture,
+map its `PT_LOAD`, and execute the guest `mov/add/ret` entry. A successful
+result is `BOOT OK` with result `42`; this validates the loader/runtime path but
+is not a claim that real PS5 VSH has booted.
+
 SideStore is a valid alternative for signing/installing and JIT activation,
 but it is not required for the first proof.
 

@@ -58,7 +58,7 @@ lawfully obtained material at runtime.
 - [x] Validate `PT_LOAD` file/memory ranges without loading segment bytes
 - [x] Add a metadata-only firmware component catalog with bounded range lookup
 - [x] Map validated segments into sparse guest memory
-- [ ] Add entry-point and synthetic guest execution report
+- [x] Add entry-point and synthetic guest execution report
 
 ## Milestone 4 — PS5 HLE foundation
 

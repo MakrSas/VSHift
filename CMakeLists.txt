@@ -10,6 +10,7 @@ option(VSHIFT_BUILD_TESTS "Build host-side tests" ON)
 option(VSHIFT_BUILD_IOS "Build the iOS application target" OFF)
 
 add_library(vshift_core STATIC
+    core/boot/synthetic_boot.cpp
     core/cpu/executable_memory.cpp
     core/cpu/arm64_jit.cpp
     core/cpu/ir.cpp
@@ -45,6 +46,11 @@ if(VSHIFT_BUILD_TESTS)
     )
     target_link_libraries(vshift_ir_test PRIVATE vshift_core)
 
+    add_executable(vshift_synthetic_boot_test
+        tests/synthetic_boot_test.cpp
+    )
+    target_link_libraries(vshift_synthetic_boot_test PRIVATE vshift_core)
+
     add_executable(vshift_slb2_test
         tests/slb2_test.cpp
     )
@@ -77,6 +83,7 @@ if(VSHIFT_BUILD_TESTS)
 
     add_test(NAME vshift_jit_smoke COMMAND vshift_jit_smoke)
     add_test(NAME vshift_ir_test COMMAND vshift_ir_test)
+    add_test(NAME vshift_synthetic_boot_test COMMAND vshift_synthetic_boot_test)
     add_test(NAME vshift_slb2_test COMMAND vshift_slb2_test)
     add_test(NAME vshift_pup_test COMMAND vshift_pup_test)
     add_test(NAME vshift_catalog_test COMMAND vshift_catalog_test)
