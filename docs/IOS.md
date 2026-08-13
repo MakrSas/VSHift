@@ -20,8 +20,9 @@ machine.
 
 The current probe also has an `Import PS5UPDATE.PUP` button. Select the
 user-provided official PUP from Files; the app reads only the SLB2 header and
-file table and shows the first component names. It does not copy or decrypt
-firmware yet.
+file table plus the public prefix of the first non-empty PUP fragment. It shows
+the first component names and saves a metadata-only manifest in Application
+Support. It does not copy, decrypt, or mount firmware yet.
 
 SideStore is a valid alternative for signing/installing and JIT activation,
 but it is not required for the first proof.

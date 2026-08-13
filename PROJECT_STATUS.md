@@ -5,7 +5,8 @@ Date: 2026-08-13
 ## Current milestone
 
 Milestones 0 and 1 are complete: the JIT PoC returned `42` on the user's
-iPhone 15. Milestone 2a now has an on-device SLB2 inspection path.
+iPhone 15. Milestone 2a now has on-device SLB2 inspection, a public nested-PUP
+header probe, and metadata-only manifest storage.
 
 ## Working
 
@@ -33,11 +34,13 @@ iPhone 15. Milestone 2a now has an on-device SLB2 inspection path.
   CLI inspector, and malformed-input tests. No firmware is bundled.
 - The iOS probe now opens a user-selected PUP from Files and displays its first
   SLB2 component names without copying or decrypting firmware.
+- The iOS probe reads the public prefix of the first non-empty nested PUP and
+  saves a metadata-only manifest in Application Support.
 
 ## Not working yet
 
 - No PS5 ELF/SELF loader.
-- No firmware importer or PUP parser.
+- No firmware importer, decryption, or filesystem extraction.
 - No guest memory subsystem, IR, block cache, HLE, GPU, audio, or input.
 - No firmware component has been extracted or executed yet.
 
@@ -51,8 +54,8 @@ validate the executable-memory/signing path before larger CPU work starts.
 
 1. Download the new device IPA and update the existing installation with
    iLoader.
-2. Use `Import PS5UPDATE.PUP` and record the component list from a real PUP.
-3. Add versioned manifest storage and a read-only firmware filesystem.
+2. Use `Import PS5UPDATE.PUP` and record the nested public header and manifest.
+3. Add a read-only firmware filesystem over user-provided components.
 4. Add IR and a guest register/flags model while keeping the firmware parser
    independent from CPU execution.
 5. Add a JIT-less IR interpreter for firmware and CPU experiments without

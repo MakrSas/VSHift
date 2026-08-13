@@ -31,6 +31,10 @@ Example:
 vshift_firmware_inspect PS5UPDATE.PUP
 ```
 
-This is intentionally the first real-firmware test. The next step is to add an
-iOS document picker and persist the resulting manifest, before attempting to
-read any encrypted component.
+This is intentionally the first real-firmware test. The iOS probe now also
+reads the first `0x10` public bytes of the first non-empty PUP fragment. A
+`0xEEF51454` magic identifies the PS5 PUP/SELF payload; the remaining `0x10`
+bytes of its nominal header and all segment metadata remain encrypted and are
+not read or interpreted. The resulting metadata-only manifest is saved as
+`Application Support/VSHift/firmware-manifest.json`; it contains names, sizes,
+offsets, and public header metadata, never firmware contents.

@@ -45,7 +45,7 @@ unavailable. This is a correctness/debug mode, not the performance path.
 - [x] Validate table bounds and component ranges without loading the whole PUP
 - [x] Add a host inspector and synthetic malformed-input tests
 - [x] Add an iOS document picker and read the firmware table on-device
-- [ ] Persist a versioned firmware manifest
+- [x] Persist a versioned metadata-only firmware manifest
 
 ## Milestone 3 — PS5 ELF/SELF loader
 

@@ -14,6 +14,7 @@ add_library(vshift_core STATIC
     core/cpu/arm64_jit.cpp
     core/cpu/x86_decoder.cpp
     core/firmware/slb2.cpp
+    core/firmware/pup.cpp
 )
 
 target_include_directories(vshift_core PUBLIC
@@ -39,8 +40,14 @@ if(VSHIFT_BUILD_TESTS)
     )
     target_link_libraries(vshift_slb2_test PRIVATE vshift_core)
 
+    add_executable(vshift_pup_test
+        tests/pup_test.cpp
+    )
+    target_link_libraries(vshift_pup_test PRIVATE vshift_core)
+
     add_test(NAME vshift_jit_smoke COMMAND vshift_jit_smoke)
     add_test(NAME vshift_slb2_test COMMAND vshift_slb2_test)
+    add_test(NAME vshift_pup_test COMMAND vshift_pup_test)
 endif()
 
 add_executable(vshift_firmware_inspect

@@ -2,6 +2,7 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include "core/cpu/arm64_jit.h"
+#include "core/firmware/pup.h"
 #include "core/firmware/slb2.h"
 #include "core/cpu/x86_decoder.h"
 
@@ -98,6 +99,43 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     [self presentViewController:picker animated:YES completion:nil];
 }
 
+- (BOOL)writeManifest:(NSDictionary *)manifest error:(NSError **)error {
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSURL *applicationSupport =
+        [fileManager URLForDirectory:NSApplicationSupportDirectory
+                            inDomain:NSUserDomainMask
+                   appropriateForURL:nil
+                              create:YES
+                               error:error];
+    if (applicationSupport == nil) {
+        return NO;
+    }
+
+    NSURL *vshiftDirectory =
+        [applicationSupport URLByAppendingPathComponent:@"VSHift"
+                                             isDirectory:YES];
+    if (![fileManager createDirectoryAtURL:vshiftDirectory
+                withIntermediateDirectories:YES
+                                 attributes:nil
+                                      error:error]) {
+        return NO;
+    }
+
+    NSData *manifestData =
+        [NSJSONSerialization dataWithJSONObject:manifest
+                                         options:NSJSONWritingPrettyPrinted
+                                           error:error];
+    if (manifestData == nil) {
+        return NO;
+    }
+
+    NSURL *manifestURL =
+        [vshiftDirectory URLByAppendingPathComponent:@"firmware-manifest.json"];
+    return [manifestData writeToURL:manifestURL
+                             options:NSDataWritingAtomic
+                               error:error];
+}
+
 - (void)documentPicker:(UIDocumentPickerViewController *)controller
  didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     (void)controller;
@@ -176,12 +214,12 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
 
     [handle seekToFileOffset:0];
     NSData *tableData = [handle readDataOfLength:tableSize];
-    [handle closeFile];
-    if (accessed) {
-        [url stopAccessingSecurityScopedResource];
-    }
     if (tableData.length != tableSize) {
         self.statusLabel.text = @"Could not read firmware file table.";
+        [handle closeFile];
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
         return;
     }
 
@@ -191,8 +229,90 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
     if (!parsed.ok()) {
         self.statusLabel.text = [NSString stringWithFormat:
             @"Firmware parse failed:\n%s", parsed.error.c_str()];
+        [handle closeFile];
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
         return;
     }
+
+    std::size_t fragmentIndex = parsed.package.entries.size();
+    for (std::size_t index = 0; index < parsed.package.entries.size(); ++index) {
+        if (parsed.package.entries[index].size >=
+            vshift::firmware::kPupFragmentPublicHeaderSize) {
+            fragmentIndex = index;
+            break;
+        }
+    }
+
+    vshift::firmware::PupFragmentParseResult fragment;
+    bool fragmentRead = false;
+    if (fragmentIndex < parsed.package.entries.size()) {
+        const auto &entry = parsed.package.entries[fragmentIndex];
+        [handle seekToFileOffset:entry.offset];
+        NSData *fragmentData =
+            [handle readDataOfLength:
+                         vshift::firmware::kPupFragmentPublicHeaderSize];
+        if (fragmentData.length ==
+            vshift::firmware::kPupFragmentPublicHeaderSize) {
+            const auto *fragmentBytes =
+                static_cast<const std::uint8_t *>(fragmentData.bytes);
+            fragment = vshift::firmware::ParsePupFragmentHeader(
+                std::span<const std::uint8_t>(
+                    fragmentBytes, fragmentData.length));
+            fragmentRead = true;
+        }
+    }
+
+    NSMutableArray *components = [NSMutableArray arrayWithCapacity:
+        parsed.package.entries.size()];
+    for (std::size_t index = 0; index < parsed.package.entries.size(); ++index) {
+        const auto &entry = parsed.package.entries[index];
+        NSString *name = [NSString stringWithUTF8String:entry.name.c_str()];
+        NSMutableDictionary *component = [@{
+            @"name": name ?: @"(unnamed)",
+            @"offset": @(entry.offset),
+            @"size": @(entry.size),
+        } mutableCopy];
+        if (index == fragmentIndex && fragmentRead && fragment.ok()) {
+            component[@"fragment_header"] = @{
+                @"format": @"PS5 PUP/SELF public header",
+                @"magic": [NSString stringWithFormat:@"0x%08x",
+                            fragment.header.magic],
+                @"version": @(fragment.header.version),
+                @"mode": @(fragment.header.mode),
+                @"endian": @(fragment.header.endian),
+                @"attributes": @(fragment.header.attributes),
+                @"key_type": @(fragment.header.key_type),
+                @"header_size": @(fragment.header.header_size),
+                @"metadata_size": @(fragment.header.metadata_size),
+            };
+        }
+        [components addObject:component];
+    }
+
+    NSDictionary *manifest = @{
+        @"schema_version": @1,
+        @"source_file_name": url.lastPathComponent ?: @"PS5UPDATE.PUP",
+        @"container_format": @"SLB2",
+        @"container_size": @(fileSize),
+        @"slb2": @{
+            @"version": @(parsed.package.version),
+            @"flags": @(parsed.package.flags),
+            @"entry_count": @(parsed.package.entry_count),
+            @"size_in_sectors": @(parsed.package.size_in_sectors),
+        },
+        @"components": components,
+    };
+
+    [handle closeFile];
+    if (accessed) {
+        [url stopAccessingSecurityScopedResource];
+    }
+
+    NSError *manifestError = nil;
+    const BOOL manifestSaved = [self writeManifest:manifest
+                                             error:&manifestError];
 
     NSMutableString *summary = [NSMutableString stringWithFormat:
         @"SLB2 OK\n%d components", parsed.package.entry_count];
@@ -207,6 +327,20 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
         [summary appendFormat:@"\n… and %d more",
                               static_cast<int>(parsed.package.entries.size() -
                                                visibleEntries)];
+    }
+    if (fragmentRead && fragment.ok()) {
+        [summary appendFormat:@"\nPS5 fragment: 0x%08x, header 0x%x",
+                              fragment.header.magic,
+                              fragment.header.header_size];
+    } else if (fragmentRead) {
+        [summary appendFormat:@"\nFragment header: %s",
+                              fragment.error.c_str()];
+    }
+    if (manifestSaved) {
+        [summary appendString:@"\nManifest saved"];
+    } else {
+        [summary appendFormat:@"\nManifest save failed: %@",
+                              manifestError.localizedDescription ?: @"unknown error"];
     }
     self.statusLabel.text = summary;
 }
