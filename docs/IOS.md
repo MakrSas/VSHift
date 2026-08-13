@@ -24,6 +24,10 @@ file table plus the public prefix of the first non-empty PUP fragment. It shows
 the first component names and saves a metadata-only manifest in Application
 Support. It does not copy, decrypt, or mount firmware yet.
 
+After a successful import, tap `Export manifest to Files` and choose a folder
+in the iOS Files app. The exported `firmware-manifest.json` contains only
+container and public-header metadata.
+
 SideStore is a valid alternative for signing/installing and JIT activation,
 but it is not required for the first proof.
 

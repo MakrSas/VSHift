@@ -13,6 +13,8 @@
 
 @interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate>
 @property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UIButton *exportManifestButton;
+@property(nonatomic, strong) NSURL *manifestURL;
 @end
 
 @implementation VSHiftJITViewController
@@ -71,8 +73,19 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
                      action:@selector(importFirmware)
            forControlEvents:UIControlEventTouchUpInside];
 
+    self.exportManifestButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.exportManifestButton.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.exportManifestButton setTitle:@"Export manifest to Files"
+                               forState:UIControlStateNormal];
+    self.exportManifestButton.titleLabel.font =
+        [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    self.exportManifestButton.enabled = NO;
+    [self.exportManifestButton addTarget:self
+                                  action:@selector(exportManifest)
+                        forControlEvents:UIControlEventTouchUpInside];
+
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        title, self.statusLabel, importButton
+        title, self.statusLabel, importButton, self.exportManifestButton
     ]];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     stack.axis = UILayoutConstraintAxisVertical;
@@ -96,6 +109,21 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
             asCopy:NO];
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)exportManifest {
+    if (self.manifestURL == nil) {
+        self.statusLabel.text =
+            @"Import a firmware file first to create a manifest.";
+        return;
+    }
+
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc]
+            initForExportingURLs:@[self.manifestURL]
+                           asCopy:YES];
+    picker.delegate = self;
     [self presentViewController:picker animated:YES completion:nil];
 }
 
@@ -131,9 +159,14 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
 
     NSURL *manifestURL =
         [vshiftDirectory URLByAppendingPathComponent:@"firmware-manifest.json"];
-    return [manifestData writeToURL:manifestURL
-                             options:NSDataWritingAtomic
-                               error:error];
+    const BOOL saved = [manifestData writeToURL:manifestURL
+                                        options:NSDataWritingAtomic
+                                          error:error];
+    if (saved) {
+        self.manifestURL = manifestURL;
+        self.exportManifestButton.enabled = YES;
+    }
+    return saved;
 }
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller
