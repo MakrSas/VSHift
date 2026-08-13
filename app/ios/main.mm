@@ -327,11 +327,50 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
         return;
     }
 
-    NSData *headerData =
-        [handle readDataOfLength:vshift::firmware::kPupFragmentPublicHeaderSize];
-    [handle closeFile];
-    if (headerData.length < vshift::firmware::kPupFragmentPublicHeaderSize) {
+    NSData *fixedHeaderData =
+        [handle readDataOfLength:vshift::firmware::kPupFixedHeaderSize];
+    if (fixedHeaderData.length < vshift::firmware::kPupFixedHeaderSize) {
+        [handle closeFile];
         self.statusLabel.text = @"Could not read decrypted PUP header.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    const auto *fixedHeaderBytes =
+        static_cast<const std::uint8_t *>(fixedHeaderData.bytes);
+    const auto publicHeader = vshift::firmware::ParsePupFragmentHeader(
+        std::span<const std::uint8_t>(
+            fixedHeaderBytes, vshift::firmware::kPupFixedHeaderSize));
+    if (!publicHeader.ok()) {
+        [handle closeFile];
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"Decrypted PUP header failed:\n%s", publicHeader.error.c_str()];
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    constexpr std::uint16_t kMaximumHeaderSize = 16 * 1024;
+    if (publicHeader.header.header_size < vshift::firmware::kPupFixedHeaderSize ||
+        publicHeader.header.header_size > kMaximumHeaderSize ||
+        publicHeader.header.header_size > fileSize) {
+        [handle closeFile];
+        self.statusLabel.text = @"Decrypted PUP header size is invalid.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    [handle seekToFileOffset:0];
+    NSData *headerData =
+        [handle readDataOfLength:publicHeader.header.header_size];
+    [handle closeFile];
+    if (headerData.length < publicHeader.header.header_size) {
+        self.statusLabel.text = @"Could not read the decrypted PUP table.";
         if (accessed) {
             [url stopAccessingSecurityScopedResource];
         }
@@ -340,15 +379,31 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
 
     const auto *headerBytes =
         static_cast<const std::uint8_t *>(headerData.bytes);
-    const auto parsed = vshift::firmware::ParsePupFragmentHeader(
-        std::span<const std::uint8_t>(headerBytes, headerData.length));
+    const auto parsed = vshift::firmware::ParseDecryptedPupHeaders(
+        std::span<const std::uint8_t>(headerBytes, headerData.length),
+        fileSize);
     if (!parsed.ok()) {
         self.statusLabel.text = [NSString stringWithFormat:
-            @"Decrypted PUP header failed:\n%s", parsed.error.c_str()];
+            @"Decrypted PUP table failed:\n%s", parsed.error.c_str()];
         if (accessed) {
             [url stopAccessingSecurityScopedResource];
         }
         return;
+    }
+
+    NSMutableArray *segments =
+        [NSMutableArray arrayWithCapacity:parsed.segments.size()];
+    const auto visibleSegments = std::min<std::size_t>(
+        parsed.segments.size(), 12);
+    for (std::size_t index = 0; index < visibleSegments; ++index) {
+        const auto &segment = parsed.segments[index];
+        [segments addObject:@{
+            @"index": @(index),
+            @"flags": @(segment.flags),
+            @"offset": @(segment.offset),
+            @"compressed_size": @(segment.compressed_size),
+            @"uncompressed_size": @(segment.uncompressed_size),
+        }];
     }
 
     NSDictionary *manifest = @{
@@ -360,14 +415,22 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
         @"decrypted": @YES,
         @"public_header": @{
             @"magic": [NSString stringWithFormat:@"0x%08x",
-                        parsed.header.magic],
-            @"version": @(parsed.header.version),
-            @"mode": @(parsed.header.mode),
-            @"endian": @(parsed.header.endian),
-            @"attributes": @(parsed.header.attributes),
-            @"key_type": @(parsed.header.key_type),
-            @"header_size": @(parsed.header.header_size),
-            @"metadata_size": @(parsed.header.metadata_size),
+                        parsed.header.public_header.magic],
+            @"version": @(parsed.header.public_header.version),
+            @"mode": @(parsed.header.public_header.mode),
+            @"endian": @(parsed.header.public_header.endian),
+            @"attributes": @(parsed.header.public_header.attributes),
+            @"key_type": @(parsed.header.public_header.key_type),
+            @"header_size": @(parsed.header.public_header.header_size),
+            @"metadata_size": @(parsed.header.public_header.metadata_size),
+        },
+        @"pup": @{
+            @"file_size": @(parsed.header.file_size),
+            @"segment_count": @(parsed.header.segment_count),
+            @"flags": @(parsed.header.flags),
+            @"firmware_version": [NSString stringWithFormat:@"0x%08x",
+                                  parsed.header.firmware_version],
+            @"segments": segments,
         },
         @"boot_status": @"header validated; SELF/ELF loader pending",
     };
@@ -378,14 +441,24 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
 
     NSError *manifestError = nil;
     const BOOL manifestSaved = [self writeManifest:manifest error:&manifestError];
+    NSString *segmentSummary = [NSString stringWithFormat:
+        @"Segments: %u", parsed.header.segment_count];
+    if (!parsed.segments.empty()) {
+        const auto &first = parsed.segments.front();
+        segmentSummary = [NSString stringWithFormat:
+            @"Segments: %u\nFirst payload: 0x%llx (%llu bytes)",
+            parsed.header.segment_count,
+            static_cast<unsigned long long>(first.offset),
+            static_cast<unsigned long long>(first.compressed_size)];
+    }
     self.statusLabel.text = [NSString stringWithFormat:
-        @"DECRYPTED PUP READY\n%@\nSize: %llu bytes\nMagic: 0x%08x\nHeader: 0x%x\n%@",
+        @"DECRYPTED PUP READY\n%@\nSize: %llu bytes\nFirmware: 0x%08x\n%@\n%@",
         url.lastPathComponent ?: @"PS5UPDATE1.PUP.dec",
         static_cast<unsigned long long>(fileSize),
-        parsed.header.magic,
-        parsed.header.header_size,
+        parsed.header.firmware_version,
+        segmentSummary,
         manifestSaved
-            ? @"Manifest saved. SELF/ELF boot is the next loader step."
+            ? @"Manifest saved. Segment table is ready for SELF/ELF loading."
             : [NSString stringWithFormat:@"Manifest save failed: %@",
                 manifestError.localizedDescription ?: @"unknown error"]];
 }

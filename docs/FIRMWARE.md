@@ -38,3 +38,9 @@ bytes of its nominal header and all segment metadata remain encrypted and are
 not read or interpreted. The resulting metadata-only manifest is saved as
 `Application Support/VSHift/firmware-manifest.json`; it contains names, sizes,
 offsets, and public header metadata, never firmware contents.
+
+For a user-provided decrypted inner PUP, the probe additionally reads the
+fixed `0x20` header and the bounded segment table. It validates the declared
+file size, header/metadata ranges, and every segment's payload range, then
+stores only flags, offsets, sizes, segment count, and firmware-version metadata.
+Segment payloads and metadata keys are not interpreted by this step.
