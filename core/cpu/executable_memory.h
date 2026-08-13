@@ -16,18 +16,21 @@ public:
 
     std::uint8_t* writable_data() noexcept { return data_; }
     const std::uint8_t* data() const noexcept { return data_; }
-    std::uint8_t* executable_data() noexcept { return data_; }
-    const std::uint8_t* executable_data() const noexcept { return data_; }
+    std::uint8_t* executable_data() noexcept { return executable_data_; }
+    const std::uint8_t* executable_data() const noexcept { return executable_data_; }
     std::size_t size() const noexcept { return size_; }
 
     bool MakeExecutable() noexcept;
     void FlushInstructionCache(std::size_t offset, std::size_t size) noexcept;
 
 private:
-    ExecutableMemory(std::uint8_t* data, std::size_t size) noexcept
-        : data_(data), size_(size) {}
+    ExecutableMemory(std::uint8_t* data,
+                     std::uint8_t* executable_data,
+                     std::size_t size) noexcept
+        : data_(data), executable_data_(executable_data), size_(size) {}
 
     std::uint8_t* data_ = nullptr;
+    std::uint8_t* executable_data_ = nullptr;
     std::size_t size_ = 0;
 };
 

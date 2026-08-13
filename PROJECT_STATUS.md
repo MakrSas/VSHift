@@ -27,6 +27,8 @@ iPhone verification.
   branch.
 - A GitHub Actions job now packages an unsigned arm64 device IPA for the
   iLoader + StikDebug test path.
+- The Apple executable-memory backend now mirrors UTM's split-W^X fallback for
+  iLoader installs and uses UTM's `BRK #0x69` StikDebug hook on iOS 26/TXM.
 
 ## Not working yet
 
@@ -43,10 +45,12 @@ validate the executable-memory/signing path before larger CPU work starts.
 
 ## Next 5 actions
 
-1. Download the unsigned device IPA and sign/install it with iLoader.
-2. Activate JIT with StikDebug, run the PoC on iPhone 15, and record result/logs.
-3. Add IR and a guest register/flags model only after the device proof passes.
-4. Add a guest register and flags model with focused unit tests.
+1. Download the new unsigned device IPA and update the existing installation
+   with iLoader.
+2. Assign StikDebug's `legacy.js` to VSHift, activate JIT, and launch it from
+   StikDebug on the iPhone 15.
+3. Record `ARM64 JIT result: 42` and device logs.
+4. Add IR and a guest register/flags model only after the device proof passes.
 5. Add a demand-driven basic-block cache.
 
 ## Important commands

@@ -11,9 +11,12 @@ machine.
    `vshift-ios-device-unsigned-ipa`.
 2. Import `VSHiftJITProbe-unsigned.ipa` into iLoader and let iLoader sign and
    install it on the iPhone 15.
-3. Use StikDebug to activate JIT for the installed app, following the setup
-   required by the current iOS version and signing method.
-4. Launch `VSHiftJITProbe` and verify `ARM64 JIT result: 42`.
+3. In StikDebug, assign the bundled `legacy.js` script to `VSHiftJITProbe`.
+   VSHift uses the same `BRK #0x69` JIT hook as UTM; StikDebug's `universal.js`
+   intentionally rejects that legacy breakpoint.
+4. Activate JIT and launch `VSHiftJITProbe` from StikDebug. On iOS 26+, keep
+   `Always Run Scripts` enabled if the app is not automatically recognized.
+5. Verify `ARM64 JIT result: 42`.
 
 SideStore is a valid alternative for signing/installing and JIT activation,
 but it is not required for the first proof.
@@ -25,6 +28,12 @@ but it is not required for the first proof.
 3. Enable JIT with StikDebug or the JIT mechanism supported by the setup.
 4. Launch the app and record `ARM64 JIT result: 42`.
 5. Attach the device log to `PROJECT_STATUS.md`.
+
+The iOS allocator first tries `MAP_JIT`. If the signed app cannot use the
+restricted `dynamic-codesigning` entitlement, it falls back to UTM's Darwin
+split-W^X mapping: one writable mapping and one executable mirror created with
+`vm_remap`. On iOS 26/TXM, the executable mapping is prepared through the
+StikDebug breakpoint hook before the writable mapping is restored.
 
 The repository includes the JIT entitlement in the iOS target as a declaration;
 whether a signing service preserves it is an external deployment concern.
