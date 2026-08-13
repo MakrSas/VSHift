@@ -25,6 +25,8 @@ iPhone verification.
   source of truth for the first host and iOS builds.
 - GitHub Actions host tests and iOS simulator compilation passed on the pushed
   branch.
+- A GitHub Actions job now packages an unsigned arm64 device IPA for the
+  iLoader + StikDebug test path.
 
 ## Not working yet
 
@@ -41,8 +43,8 @@ validate the executable-memory/signing path before larger CPU work starts.
 
 ## Next 5 actions
 
-1. Produce a signed device artifact using the user's Apple signing setup.
-2. Run the PoC on iPhone 15 and record result/logs.
+1. Download the unsigned device IPA and sign/install it with iLoader.
+2. Activate JIT with StikDebug, run the PoC on iPhone 15, and record result/logs.
 3. Add IR and a guest register/flags model only after the device proof passes.
 4. Add a guest register and flags model with focused unit tests.
 5. Add a demand-driven basic-block cache.

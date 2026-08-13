@@ -41,3 +41,33 @@ jobs:
         with:
           name: vshift-ios-simulator
           path: build-ios/Release-iphonesimulator/vshift_ios_jit_probe.app
+
+  ios-device-unsigned:
+    name: iOS device unsigned IPA
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure device project
+        run: >-
+          cmake -S . -B build-device -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_SYSROOT=iphoneos
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DVSHIFT_BUILD_IOS=ON
+          -DVSHIFT_BUILD_TESTS=OFF
+      - name: Build unsigned device app
+        run: >-
+          cmake --build build-device --config Release
+          --target vshift_ios_jit_probe
+          --
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p ipa/Payload
+          cp -R build-device/Release-iphoneos/vshift_ios_jit_probe.app ipa/Payload/VSHiftJITProbe.app
+          (cd ipa && zip -qry ../VSHiftJITProbe-unsigned.ipa Payload)
+      - name: Upload device IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: vshift-ios-device-unsigned-ipa
+          path: VSHiftJITProbe-unsigned.ipa
