@@ -45,7 +45,13 @@ if(VSHIFT_BUILD_IOS)
     add_executable(vshift_ios_jit_probe MACOSX_BUNDLE
         app/ios/main.mm
     )
-    target_link_libraries(vshift_ios_jit_probe PRIVATE vshift_core UIKit Foundation)
+    find_library(UIKIT_FRAMEWORK UIKit REQUIRED)
+    find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
+    target_link_libraries(vshift_ios_jit_probe PRIVATE
+        vshift_core
+        ${UIKIT_FRAMEWORK}
+        ${FOUNDATION_FRAMEWORK}
+    )
     set_target_properties(vshift_ios_jit_probe PROPERTIES
         BUNDLE TRUE
         MACOSX_BUNDLE_GUI_IDENTIFIER org.vshift.VSHiftJITProbe
@@ -54,5 +60,6 @@ if(VSHIFT_BUILD_IOS)
             "${CMAKE_CURRENT_SOURCE_DIR}/app/ios/VSHiftJITProbe.entitlements"
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
         XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "15.0"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.vshift.VSHiftJITProbe"
     )
 endif()
