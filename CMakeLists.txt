@@ -13,7 +13,9 @@ add_library(vshift_core STATIC
     core/cpu/executable_memory.cpp
     core/cpu/arm64_jit.cpp
     core/cpu/x86_decoder.cpp
+    core/memory/guest_memory.cpp
     core/loader/elf.cpp
+    core/loader/elf_loader.cpp
     core/firmware/catalog.cpp
     core/firmware/slb2.cpp
     core/firmware/pup.cpp
@@ -57,11 +59,23 @@ if(VSHIFT_BUILD_TESTS)
     )
     target_link_libraries(vshift_elf_test PRIVATE vshift_core)
 
+    add_executable(vshift_guest_memory_test
+        tests/guest_memory_test.cpp
+    )
+    target_link_libraries(vshift_guest_memory_test PRIVATE vshift_core)
+
+    add_executable(vshift_elf_loader_test
+        tests/elf_loader_test.cpp
+    )
+    target_link_libraries(vshift_elf_loader_test PRIVATE vshift_core)
+
     add_test(NAME vshift_jit_smoke COMMAND vshift_jit_smoke)
     add_test(NAME vshift_slb2_test COMMAND vshift_slb2_test)
     add_test(NAME vshift_pup_test COMMAND vshift_pup_test)
     add_test(NAME vshift_catalog_test COMMAND vshift_catalog_test)
     add_test(NAME vshift_elf_test COMMAND vshift_elf_test)
+    add_test(NAME vshift_guest_memory_test COMMAND vshift_guest_memory_test)
+    add_test(NAME vshift_elf_loader_test COMMAND vshift_elf_loader_test)
 endif()
 
 add_executable(vshift_firmware_inspect

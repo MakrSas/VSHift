@@ -36,4 +36,6 @@ test.
 The current foundation implements the metadata side of stage 1: an SLB2
 component catalog resolves bounded file ranges without owning firmware bytes.
 It also implements the validation side of stage 2 for little-endian ELF64
-headers and `PT_LOAD` ranges. Segment mapping and execution remain future work.
+headers and `PT_LOAD` ranges, plus sparse guest-memory mapping for synthetic
+ELF input. Real firmware execution and the mapped-segment report remain future
+work.

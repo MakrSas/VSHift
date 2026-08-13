@@ -39,13 +39,15 @@ header probe, and metadata-only manifest storage.
 - Added a metadata-only firmware catalog that resolves bounded component
   ranges without loading firmware bytes.
 - Added a bounded ELF64/`PT_LOAD` header parser and synthetic malformed-input
-  tests; segment mapping is not implemented yet.
+  tests; real-firmware segment sourcing is not implemented yet.
+- Added sparse guest memory and synthetic `PT_LOAD` mapping with zero-filled
+  BSS behavior and permission-aware guest reads/writes.
 
 ## Not working yet
 
-- No PS5 SELF decryption or ELF segment mapper.
+- No PS5 SELF decryption or real-firmware segment source.
 - No firmware importer, decryption, or filesystem extraction.
-- No guest memory subsystem, IR, block cache, HLE, GPU, audio, or input.
+- No IR, block cache, HLE, GPU, audio, or input.
 - No firmware component has been extracted or executed yet.
 
 ## Current hypothesis
@@ -59,7 +61,7 @@ validate the executable-memory/signing path before larger CPU work starts.
 1. Download the new device IPA and update the existing installation with
    iLoader.
 2. Use `Import PS5UPDATE.PUP` and record the nested public header and manifest.
-3. Map validated ELF segments into guest memory using the read-only catalog.
+3. Add a mapped-segment report and synthetic guest entry-point check.
 4. Add IR and a guest register/flags model while keeping the firmware parser
    independent from CPU execution.
 5. Add a JIT-less IR interpreter for firmware and CPU experiments without

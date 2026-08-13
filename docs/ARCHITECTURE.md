@@ -1,6 +1,6 @@
 # VSHift architecture
 
-Status: Milestone 0/1 foundation, 2026-08-13.
+Status: Milestone 0/1 plus firmware/loader foundation, 2026-08-13.
 
 VSHift is a new modular emulator project. It does not merge RPCSX, KytyPS5,
 SharpEmu, FEX, or Box64 into one tree. Those projects are research inputs; the
@@ -65,5 +65,5 @@ a focused test and a clear semantic definition.
 | `gpu/` | Guest commands and shader/resource translation | memory, host renderer |
 | `app/ios` | iOS lifecycle and presentation | core, UIKit/Metal |
 
-The IR and memory modules are intentionally not faked in Milestone 1; they are
-the next additions after the byte-level JIT proof is verified on hardware.
+The IR module is intentionally still pending. The memory module now has a
+sparse guest-address-space foundation used by synthetic ELF mapping tests.
