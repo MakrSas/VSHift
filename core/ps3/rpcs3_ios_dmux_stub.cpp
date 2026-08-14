@@ -1,6 +1,8 @@
 #include "stdafx.h"
 
+#include "Emu/Cell/Modules/cellPamf.h"
 #include "Emu/Cell/Modules/cellDmux.h"
+#include "Emu/IdManager.h"
 #include "Emu/Cell/PPUModule.h"
 
 // iOS currently builds RPCS3 in headless mode without FFmpeg/PAMF parsing.
