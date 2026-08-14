@@ -628,11 +628,11 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
         field.placeholder = @"My PS3";
         field.text = @"PS3 Console";
     }];
-    __weak VSHiftJITViewController *weakSelf = self;
+    __block VSHiftJITViewController *blockSelf = self;
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Create" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;
-        VSHiftJITViewController *strongSelf = weakSelf;
+        VSHiftJITViewController *strongSelf = blockSelf;
         if (strongSelf == nil) return;
         NSString *name = alert.textFields.firstObject.text;
         if (name.length == 0) name = @"PS3 Console";
@@ -663,10 +663,10 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
                                                                      message:@"The profile will be removed. Imported files are not deleted."
                                                               preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    __weak VSHiftJITViewController *weakSelf = self;
+    __block VSHiftJITViewController *blockSelf = self;
     [alert addAction:[UIAlertAction actionWithTitle:@"Delete" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
         (void)action;
-        VSHiftJITViewController *strongSelf = weakSelf;
+        VSHiftJITViewController *strongSelf = blockSelf;
         if (strongSelf == nil) return;
         [strongSelf.ps3Machines removeObject:strongSelf.activePs3Machine];
         strongSelf.activePs3Machine = nil;
