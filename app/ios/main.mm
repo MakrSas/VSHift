@@ -183,7 +183,7 @@
     UILabel *footer = [[UILabel alloc] init];
     footer.text = @"VSHift · PS4 screen output\nReal SELF headers: validated · Guest code: next stage";
     footer.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
-    footer.textColor = UIColor.systemGrayColor;
+    footer.textColor = UIColor.systemGray;
     footer.numberOfLines = 0;
     [content addArrangedSubview:footer];
 
