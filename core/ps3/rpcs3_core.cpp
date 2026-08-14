@@ -4,12 +4,15 @@
 
 #include "Emu/Audio/Null/NullAudioBackend.h"
 #include "Emu/Audio/Null/null_enumerator.h"
+#include "Emu/Cell/Modules/cellSaveData.h"
+#include "Emu/Cell/Modules/sceNpTrophy.h"
 #include "Emu/Io/Null/null_camera_handler.h"
 #include "Emu/Io/Null/null_music_handler.h"
 #include "Emu/RSX/Null/NullGSRender.h"
 #include "Emu/System.h"
 #include "Emu/VFS.h"
 #include "Emu/vfs_config.h"
+#include "util/video_source.h"
 
 #include <system_error>
 #include <utility>
