@@ -9,6 +9,9 @@ namespace {
 
 constexpr std::uint32_t kBytesPerPixel = 4;
 constexpr std::uint32_t kMaximumDimension = 8192;
+// Keep malformed guest metadata from forcing an unbounded host allocation.
+// This is well above a 4K RGBA frame while still being safe for a mobile host.
+constexpr std::uint64_t kMaximumFrameBytes = 256ull * 1024ull * 1024ull;
 
 bool MultiplyWouldOverflow(std::uint64_t left,
                            std::uint64_t right) noexcept {
@@ -37,6 +40,8 @@ FrameResult FrameBuffer::Validate(const FrameDescription& description,
         return result;
     }
     if (MultiplyWouldOverflow(description.bytes_per_row, description.height) ||
+        static_cast<std::uint64_t>(description.bytes_per_row) *
+                description.height > kMaximumFrameBytes ||
         static_cast<std::uint64_t>(description.bytes_per_row) *
                 description.height != pixel_count) {
         result.error = "guest frame byte count does not match its stride";
@@ -71,8 +76,14 @@ FrameResult FrameBuffer::CopyFromGuest(
     const FrameDescription& description) {
     const auto byte_count = static_cast<std::uint64_t>(
         description.bytes_per_row) * description.height;
-    if (byte_count > std::numeric_limits<std::size_t>::max()) {
+    if (byte_count > kMaximumFrameBytes ||
+        byte_count > std::numeric_limits<std::size_t>::max()) {
         return {"guest frame is too large for the host"};
+    }
+
+    const auto validated = Validate(description, static_cast<std::size_t>(byte_count));
+    if (!validated.ok()) {
+        return validated;
     }
 
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(byte_count));

@@ -152,6 +152,14 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         "    Cell/Modules/cellMic.cpp\n"
         ""
         RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+    # Video demuxing is not part of the first VSH boot boundary.  The module
+    # pulls in the host media pipeline and uses C++23 ranges facilities that
+    # are not available in Apple's device libc++ yet.  Keep it for the later
+    # media/audio milestone instead of making the device core depend on it.
+    string(REPLACE
+        "    Cell/Modules/cellDmuxPamf.cpp\n"
+        ""
+        RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     string(REPLACE
         "if(NOT ANDROID AND NOT APPLE)"
         "if(NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"

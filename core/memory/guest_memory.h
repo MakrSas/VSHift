@@ -11,6 +11,8 @@ namespace vshift::memory {
 constexpr std::uint32_t kPermissionRead = 1u << 0;
 constexpr std::uint32_t kPermissionWrite = 1u << 1;
 constexpr std::uint32_t kPermissionExecute = 1u << 2;
+constexpr std::uint64_t kMaximumGuestRegionBytes = 512ull * 1024ull * 1024ull;
+constexpr std::uint64_t kMaximumGuestMemoryBytes = 1ull * 1024ull * 1024ull * 1024ull;
 
 struct Mapping final {
     std::uint64_t guest_address = 0;
@@ -56,6 +58,7 @@ private:
                          std::uint64_t size) noexcept;
 
     std::vector<Region> regions_;
+    std::uint64_t mapped_bytes_ = 0;
 };
 
 } // namespace vshift::memory

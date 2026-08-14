@@ -10,6 +10,7 @@
 #include "Utilities/File.h"
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -44,6 +45,31 @@ std::string PupErrorText(pup_error error) {
     return "PS3 PUP validation failed";
 }
 
+bool IsSafeArchivePath(std::string_view path) {
+    if (path.empty() || path.front() == '/' || path.front() == '\\' ||
+        (path.size() >= 2 && path[1] == ':')) {
+        return false;
+    }
+
+    std::size_t component_start = 0;
+    while (component_start < path.size()) {
+        const auto separator = path.find_first_of("/\\", component_start);
+        const auto component_end = separator == std::string_view::npos
+                                       ? path.size()
+                                       : separator;
+        const auto component = path.substr(component_start,
+                                            component_end - component_start);
+        if (component.empty() || component == "." || component == "..") {
+            return false;
+        }
+        if (separator == std::string_view::npos) {
+            break;
+        }
+        component_start = separator + 1;
+    }
+    return true;
+}
+
 } // namespace
 
 #endif
@@ -58,6 +84,18 @@ FirmwareInstallReport Rpcs3FirmwareInstaller::Install(
     report.dev_flash_directory = emulator_directory / "dev_flash";
 
 #if defined(VSHIFT_HAS_RPCS3_CORE)
+    constexpr std::uintmax_t kMaximumPupBytes = 1ull * 1024ull * 1024ull * 1024ull;
+    std::error_code file_size_error;
+    const auto pup_size = std::filesystem::file_size(pup_path, file_size_error);
+    if (file_size_error) {
+        report.error = "cannot inspect PS3UPDAT.PUP size";
+        return report;
+    }
+    if (pup_size > kMaximumPupBytes) {
+        report.error = "PS3UPDAT.PUP exceeds the mobile installer size limit";
+        return report;
+    }
+
     const auto emulator_root = EnsureTrailingSeparator(emulator_directory);
     const auto dev_flash = EnsureTrailingSeparator(report.dev_flash_directory);
 
@@ -110,7 +148,7 @@ FirmwareInstallReport Rpcs3FirmwareInstaller::Install(
     update_filenames.erase(
         std::remove_if(update_filenames.begin(), update_filenames.end(),
                        [](const std::string& name) {
-                           return name.find("dev_flash_") == umax;
+                           return !name.starts_with("dev_flash_");
                        }),
         update_filenames.end());
     if (update_filenames.empty()) {
@@ -156,6 +194,15 @@ FirmwareInstallReport Rpcs3FirmwareInstaller::Install(
         }
 
         tar_object dev_flash_tar(package_files[2]);
+        const auto dev_flash_entries = dev_flash_tar.get_filenames();
+        if (std::ranges::any_of(dev_flash_entries,
+                                [](const std::string& name) {
+                                    return !IsSafeArchivePath(name);
+                                })) {
+            report.error = "PS3 dev_flash TAR contains an unsafe path";
+            vfs::unmount("/dev_flash");
+            return report;
+        }
         if (!dev_flash_tar.extract()) {
             report.error = "RPCS3 could not extract a PS3 dev_flash package";
             vfs::unmount("/dev_flash");

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <new>
 #include <utility>
 
 namespace vshift::memory {
@@ -41,6 +42,11 @@ MemoryResult GuestMemory::Map(Mapping mapping) {
         result.error = "guest mapping is too large for this host";
         return result;
     }
+    if (mapping.size > kMaximumGuestRegionBytes ||
+        mapping.size > kMaximumGuestMemoryBytes - mapped_bytes_) {
+        result.error = "guest mapping exceeds the configured memory budget";
+        return result;
+    }
 
     for (const auto& region : regions_) {
         const auto overlaps =
@@ -54,10 +60,16 @@ MemoryResult GuestMemory::Map(Mapping mapping) {
         }
     }
 
-    Region region;
-    region.mapping = mapping;
-    region.bytes.resize(static_cast<std::size_t>(mapping.size), 0);
-    regions_.push_back(std::move(region));
+    try {
+        Region region;
+        region.mapping = mapping;
+        region.bytes.resize(static_cast<std::size_t>(mapping.size), 0);
+        regions_.push_back(std::move(region));
+    } catch (const std::bad_alloc&) {
+        result.error = "guest mapping allocation failed";
+        return result;
+    }
+    mapped_bytes_ += mapping.size;
     return result;
 }
 

@@ -27,16 +27,26 @@ std::string EnsureTrailingSeparator(std::filesystem::path path) {
     return value;
 }
 
-void InstallHeadlessCallbacks() {
+void InstallHeadlessCallbacks(
+    const vshift::ps3::CoreCallbacks& core_callbacks) {
     EmuCallbacks callbacks;
-    callbacks.call_from_main_thread = [](std::function<void()> function,
-                                         atomic_t<u32>* wake_up) {
-        if (function) {
-            function();
-        }
-        if (wake_up) {
-            *wake_up = true;
-            wake_up->notify_one();
+    const auto dispatch_to_main = core_callbacks.call_from_main_thread;
+    callbacks.call_from_main_thread = [dispatch_to_main](
+                                          std::function<void()> function,
+                                          atomic_t<u32>* wake_up) {
+        auto invoke = [function = std::move(function), wake_up]() mutable {
+            if (function) {
+                function();
+            }
+            if (wake_up) {
+                *wake_up = true;
+                wake_up->notify_one();
+            }
+        };
+        if (dispatch_to_main) {
+            dispatch_to_main(std::move(invoke));
+        } else {
+            invoke();
         }
     };
     callbacks.on_run = [](bool) {};
@@ -150,6 +160,12 @@ BootReport Rpcs3Core::StartVsh(
     report.emulator_directory = emulator_directory;
 
 #if defined(VSHIFT_HAS_RPCS3_CORE)
+    std::unique_lock lifecycle_lock(lifecycle_mutex_);
+    if (running_.load(std::memory_order_acquire) || initialized_) {
+        report.error = "RPCS3 VSH is already initialized";
+        return report;
+    }
+
     std::error_code ec;
     std::filesystem::create_directories(emulator_directory, ec);
     if (ec) {
@@ -159,7 +175,7 @@ BootReport Rpcs3Core::StartVsh(
     }
 
     const auto emulator_root = EnsureTrailingSeparator(emulator_directory);
-    InstallHeadlessCallbacks();
+    InstallHeadlessCallbacks(callbacks_);
 
     // Set the user-owned root before Init(): RPCS3 uses it while creating and
     // resolving its VFS directories.
@@ -211,7 +227,8 @@ BootReport Rpcs3Core::StartVsh(
     }
 
     report.stage = BootStage::VshStarted;
-    running_ = true;
+    running_.store(true, std::memory_order_release);
+    lifecycle_lock.unlock();
     if (callbacks_.on_started) {
         callbacks_.on_started();
     }
@@ -224,7 +241,8 @@ BootReport Rpcs3Core::StartVsh(
 
 bool Rpcs3Core::Pause() {
 #if defined(VSHIFT_HAS_RPCS3_CORE)
-    return running_ && Emu.Pause(true, false);
+    std::lock_guard lifecycle_lock(lifecycle_mutex_);
+    return running_.load(std::memory_order_acquire) && Emu.Pause(true, false);
 #else
     return false;
 #endif
@@ -232,7 +250,8 @@ bool Rpcs3Core::Pause() {
 
 void Rpcs3Core::Resume() {
 #if defined(VSHIFT_HAS_RPCS3_CORE)
-    if (running_) {
+    std::lock_guard lifecycle_lock(lifecycle_mutex_);
+    if (running_.load(std::memory_order_acquire)) {
         Emu.Resume();
     }
 #endif
@@ -240,7 +259,8 @@ void Rpcs3Core::Resume() {
 
 bool Rpcs3Core::MountIso(const std::filesystem::path& iso_path) {
 #if defined(VSHIFT_HAS_RPCS3_CORE)
-    if (!running_ || iso_path.empty()) {
+    std::lock_guard lifecycle_lock(lifecycle_mutex_);
+    if (!running_.load(std::memory_order_acquire) || iso_path.empty()) {
         return false;
     }
     return Emu.InsertDisc(iso_path.string()) == game_boot_result::no_errors;
@@ -252,24 +272,27 @@ bool Rpcs3Core::MountIso(const std::filesystem::path& iso_path) {
 
 void Rpcs3Core::EjectIso() {
 #if defined(VSHIFT_HAS_RPCS3_CORE)
-    if (running_) {
+    std::lock_guard lifecycle_lock(lifecycle_mutex_);
+    if (running_.load(std::memory_order_acquire)) {
         Emu.EjectDisc();
     }
 #endif
 }
 
 void Rpcs3Core::Stop() {
+    std::unique_lock lifecycle_lock(lifecycle_mutex_);
 #if defined(VSHIFT_HAS_RPCS3_CORE)
     if (running_ || initialized_) {
         Emu.Kill(false);
-        running_ = false;
+        running_.store(false, std::memory_order_release);
         initialized_ = false;
     }
 #else
-    running_ = false;
+    running_.store(false, std::memory_order_release);
     initialized_ = false;
 #endif
 
+    lifecycle_lock.unlock();
     if (callbacks_.on_stopped) {
         callbacks_.on_stopped();
     }

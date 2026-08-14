@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <string>
 
 namespace vshift::ps3 {
@@ -19,6 +21,9 @@ struct CoreCallbacks final {
     std::function<void()> on_started;
     std::function<void()> on_stopped;
     std::function<void(std::string)> on_log;
+    // The frontend owns the actual main-thread executor. RPCS3 may call this
+    // from an emulation worker and may wait for the supplied task to finish.
+    std::function<void(std::function<void()>)> call_from_main_thread;
 };
 
 struct BootReport final {
@@ -51,12 +56,13 @@ public:
     bool MountIso(const std::filesystem::path& iso_path);
     void EjectIso();
 
-    bool running() const noexcept { return running_; }
+    bool running() const noexcept { return running_.load(std::memory_order_acquire); }
 
 private:
     CoreCallbacks callbacks_;
+    mutable std::mutex lifecycle_mutex_;
     bool initialized_ = false;
-    bool running_ = false;
+    std::atomic_bool running_ = false;
 };
 
 } // namespace vshift::ps3

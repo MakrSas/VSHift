@@ -38,7 +38,7 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
 };
 
 @interface VSHiftViewController : UIViewController <UIDocumentPickerDelegate> {
-    std::unique_ptr<vshift::ps3::Rpcs3Core> _core;
+    std::shared_ptr<vshift::ps3::Rpcs3Core> _core;
 }
 
 @property(nonatomic, strong) UILabel *statusLabel;
@@ -51,6 +51,7 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
 @property(nonatomic, assign) VSHiftPickerMode pickerMode;
 @property(nonatomic, assign) BOOL drawerOpen;
 @property(nonatomic, assign) BOOL fullscreen;
+@property(nonatomic, assign) BOOL coreOperationInFlight;
 
 @end
 
@@ -410,6 +411,10 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
 }
 
 - (void)startVSH {
+    if (self.coreOperationInFlight) {
+        self.statusLabel.text = @"Another PS3 operation is still in progress.";
+        return;
+    }
     if (_core && _core->running()) {
         self.statusLabel.text = @"PS3 VSH is already running.";
         return;
@@ -425,11 +430,8 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
     }
 
     std::filesystem::path rootPath(self.workspaceURL.path.fileSystemRepresentation);
-    // The project intentionally uses manual reference counting for the
-    // sideload-friendly iOS target. The core is stopped before this controller
-    // is released, so an unsafe non-retaining capture avoids a retain cycle.
-    __unsafe_unretained VSHiftViewController *weakSelf = self;
-    _core = std::make_unique<vshift::ps3::Rpcs3Core>(vshift::ps3::CoreCallbacks{
+    __weak VSHiftViewController *weakSelf = self;
+    _core = std::make_shared<vshift::ps3::Rpcs3Core>(vshift::ps3::CoreCallbacks{
         .on_started = [weakSelf]() {
             dispatch_async(dispatch_get_main_queue(), ^{
                 VSHiftViewController *strongSelf = weakSelf;
@@ -449,35 +451,50 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
             });
         },
         .on_log = [](std::string) {},
+        .call_from_main_thread = [](std::function<void()> function) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (function) {
+                    function();
+                }
+            });
+        },
     });
-    vshift::ps3::Rpcs3Core *core = _core.get();
+    const auto core = _core;
     self.statusLabel.text = @"Initializing RPCS3 PS3 core and mounting dev_flash…";
     self.startButton.enabled = NO;
+    self.coreOperationInFlight = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         const auto report = core->StartVsh(rootPath);
-        if (!report.ok()) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                VSHiftViewController *strongSelf = weakSelf;
-                if (!strongSelf) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            VSHiftViewController *strongSelf = weakSelf;
+            if (!strongSelf) return;
+            strongSelf.coreOperationInFlight = NO;
+            if (!report.ok()) {
                 strongSelf.statusLabel.text = [NSString stringWithFormat:
                     @"Real PS3 VSH start failed:\n%s", report.error.c_str()];
                 strongSelf.startButton.enabled = YES;
                 strongSelf->_core.reset();
-            });
-        }
+            }
+        });
     });
 }
 
 - (void)stopVSH {
+    if (self.coreOperationInFlight) {
+        self.statusLabel.text = @"Another PS3 operation is still in progress.";
+        return;
+    }
     if (!_core) {
         self.statusLabel.text = @"PS3 emulator is not running.";
         return;
     }
-    vshift::ps3::Rpcs3Core *core = _core.get();
+    const auto core = _core;
     self.statusLabel.text = @"Stopping RPCS3…";
+    self.coreOperationInFlight = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         core->Stop();
         dispatch_async(dispatch_get_main_queue(), ^{
+            self.coreOperationInFlight = NO;
             self->_core.reset();
             [self refreshFirmwareState];
         });
@@ -485,17 +502,23 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
 }
 
 - (void)togglePause {
+    if (self.coreOperationInFlight) {
+        self.statusLabel.text = @"Another PS3 operation is still in progress.";
+        return;
+    }
     if (!_core || !_core->running()) {
         self.statusLabel.text = @"Start the real PS3 VSH before using pause.";
         return;
     }
-    vshift::ps3::Rpcs3Core *core = _core.get();
+    const auto core = _core;
+    self.coreOperationInFlight = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         const BOOL paused = core->Pause();
         if (!paused) {
             core->Resume();
         }
         dispatch_async(dispatch_get_main_queue(), ^{
+            self.coreOperationInFlight = NO;
             self.statusLabel.text = paused ? @"PS3 VSH paused." : @"PS3 VSH resumed.";
         });
     });
@@ -516,27 +539,33 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
                     @"Import failed:\n%s", report.error.c_str()];
                 return;
             }
-                self.statusLabel.text = [NSString stringWithFormat:
-                    @"Imported %@ into the virtual console:\n%@",
-                    MediaKindName(report.kind),
+            self.statusLabel.text = [NSString stringWithFormat:
+                @"Imported %@ into the virtual console:\n%@",
+                MediaKindName(report.kind),
                 StringFromUTF8(report.destination.string())];
         });
     });
 }
 
 - (void)mountISOAtURL:(NSURL *)url {
+    if (self.coreOperationInFlight) {
+        self.statusLabel.text = @"Another PS3 operation is still in progress.";
+        return;
+    }
     if (!_core || !_core->running()) {
         self.statusLabel.text = @"Start the real PS3 VSH before mounting an ISO.";
         return;
     }
     const BOOL accessed = [url startAccessingSecurityScopedResource];
     std::filesystem::path iso(url.path.fileSystemRepresentation);
-    vshift::ps3::Rpcs3Core *core = _core.get();
+    const auto core = _core;
     self.statusLabel.text = @"Asking RPCS3 to insert the selected ISO…";
+    self.coreOperationInFlight = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         const BOOL mounted = core->MountIso(iso);
         if (accessed) [url stopAccessingSecurityScopedResource];
         dispatch_async(dispatch_get_main_queue(), ^{
+            self.coreOperationInFlight = NO;
             self.statusLabel.text = mounted
                 ? @"ISO mounted through RPCS3 dev_bdvd."
                 : @"RPCS3 could not recognize or mount this ISO.";
