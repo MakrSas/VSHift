@@ -233,7 +233,8 @@ std::string OpcodeError(std::uint64_t rip, std::uint8_t opcode,
                         std::string_view detail = {}) {
     std::string error = "unsupported x86-64 opcode at 0x";
     char buffer[32]{};
-    std::snprintf(buffer, sizeof(buffer), "%llx", rip);
+    std::snprintf(buffer, sizeof(buffer), "%llx",
+                  static_cast<unsigned long long>(rip));
     error += buffer;
     error += " (0x";
     std::snprintf(buffer, sizeof(buffer), "%02x", opcode);
@@ -253,7 +254,7 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
                         const SyscallHandler& syscall_handler) {
     GuestCpuResult result;
     result.registers.rip = entry;
-    result.registers.rsp = config.stack_top - sizeof(std::uint64_t);
+    result.registers.rsp() = config.stack_top - sizeof(std::uint64_t);
     const auto stackMapping = memory.Map({
         config.stack_top - config.stack_size,
         config.stack_size,
@@ -265,7 +266,7 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
         return result;
     }
     const std::uint64_t sentinel = 0;
-    if (!memory.Write(result.registers.rsp,
+    if (!memory.Write(result.registers.rsp(),
                       std::span(reinterpret_cast<const std::uint8_t*>(&sentinel),
                                 sizeof(sentinel))).ok()) {
         result.error = "guest stack could not be initialized";
@@ -295,13 +296,13 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
             break;
         case 0xc3: {
             std::uint64_t target = 0;
-            if (!memory.Read(result.registers.rsp,
+            if (!memory.Read(result.registers.rsp(),
                              std::span(reinterpret_cast<std::uint8_t*>(&target),
                                        sizeof(target))).ok()) {
                 result.error = "guest ret stack read failed";
                 return result;
             }
-            result.registers.rsp += sizeof(target);
+            result.registers.rsp() += sizeof(target);
             if (target == 0) {
                 result.returned = true;
                 ++result.instructions;
@@ -318,13 +319,13 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
                 return result;
             }
             std::uint64_t target = 0;
-            if (!memory.Read(result.registers.rsp,
+            if (!memory.Read(result.registers.rsp(),
                              std::span(reinterpret_cast<std::uint8_t*>(&target),
                                        sizeof(target))).ok()) {
                 result.error = "guest ret stack read failed";
                 return result;
             }
-            result.registers.rsp += sizeof(target) + adjust;
+            result.registers.rsp() += sizeof(target) + adjust;
             if (target == 0) {
                 result.returned = true;
                 ++result.instructions;
@@ -337,8 +338,8 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
         case 0x50 ... 0x57: {
             const auto reg = static_cast<std::uint8_t>((opcode - 0x50) |
                                                         ((rex & 1) ? 8 : 0));
-            result.registers.rsp -= 8;
-            if (!memory.Write(result.registers.rsp,
+            result.registers.rsp() -= 8;
+            if (!memory.Write(result.registers.rsp(),
                               std::span(reinterpret_cast<const std::uint8_t*>(
                                             &result.registers.general[reg]),
                                         8)).ok()) {
@@ -350,14 +351,14 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
         case 0x58 ... 0x5f: {
             const auto reg = static_cast<std::uint8_t>((opcode - 0x58) |
                                                         ((rex & 1) ? 8 : 0));
-            if (!memory.Read(result.registers.rsp,
+            if (!memory.Read(result.registers.rsp(),
                              std::span(reinterpret_cast<std::uint8_t*>(
                                            &result.registers.general[reg]),
                                        8)).ok()) {
                 result.error = "guest pop failed";
                 return result;
             }
-            result.registers.rsp += 8;
+            result.registers.rsp() += 8;
             break;
         }
         case 0xb8 ... 0xbf: {
@@ -387,8 +388,8 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
                 return result;
             }
             const auto returnAddress = cursor.address;
-            result.registers.rsp -= 8;
-            if (!memory.Write(result.registers.rsp,
+            result.registers.rsp() -= 8;
+            if (!memory.Write(result.registers.rsp(),
                               std::span(reinterpret_cast<const std::uint8_t*>(
                                             &returnAddress),
                                         8)).ok()) {
