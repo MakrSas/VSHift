@@ -69,6 +69,10 @@ set(RPCS3_ASM_HPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/util/asm.hpp")
 set(RPCS3_CELLSYSMODULE_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/Modules/cellSysmodule.cpp")
+set(RPCS3_CELLMIC_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/Modules/cellMic.cpp")
+set(RPCS3_CELLMIC_H
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/Modules/cellMic.h")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -145,6 +149,10 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         string(REPLACE "    ${RPCS3_NETWORK_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     endforeach()
     string(REPLACE
+        "    Cell/Modules/cellMic.cpp\n"
+        ""
+        RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+    string(REPLACE
         "if(NOT ANDROID AND NOT APPLE)"
         "if(NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"
         RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
@@ -193,6 +201,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             "return std::ranges::any_of(std::array{ \"BLJM60012\", \"BLES00039\", \"BLUS30027\", \"BLKS20001\" }, [&](const auto value) { return std::string_view{ value } == std::string_view{ paramsfo.get_ptr() + 1, 9 }; });"
             RPCS3_CELLSYSMODULE_TEXT "${RPCS3_CELLSYSMODULE_TEXT}")
         file(WRITE "${RPCS3_CELLSYSMODULE_CPP}" "${RPCS3_CELLSYSMODULE_TEXT}")
+    endif()
+
+    file(READ "${RPCS3_CELLMIC_H}" RPCS3_CELLMIC_TEXT)
+    if(NOT RPCS3_CELLMIC_TEXT MATCHES "VSHIFT_RPCS3_NO_OPENAL")
+        string(REPLACE
+            "#include \"alc.h\""
+            "#ifndef WITHOUT_OPENAL\n#include \"alc.h\"\n#else\nusing ALCdevice = void;\nusing ALCenum = int;\n#define VSHIFT_RPCS3_NO_OPENAL 1\n#endif"
+            RPCS3_CELLMIC_TEXT "${RPCS3_CELLMIC_TEXT}")
+        file(WRITE "${RPCS3_CELLMIC_H}" "${RPCS3_CELLMIC_TEXT}")
     endif()
 endif()
 
