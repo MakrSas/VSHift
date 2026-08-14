@@ -97,6 +97,26 @@ set(RPCS3_ASMJIT_VIRTMEM_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/asmjit/asmjit/src/asmjit/core/virtmem.cpp")
 set(RPCS3_NP_REQUESTS_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/NP/np_requests.cpp")
+set(RPCS3_SUBMODULE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3")
+set(RPCS3_MOBILE_SAFETY_PATCH
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/rpcs3_mobile_safety.patch")
+set(RPCS3_UNSELF_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Crypto/unself.cpp")
+file(READ "${RPCS3_UNSELF_CPP}" RPCS3_UNSELF_TEXT)
+if(NOT RPCS3_UNSELF_TEXT MATCHES "VSHIFT_RPCS3_SELF_LIMITS")
+    execute_process(
+        COMMAND git apply --whitespace=nowarn "${RPCS3_MOBILE_SAFETY_PATCH}"
+        WORKING_DIRECTORY "${RPCS3_SUBMODULE_DIR}"
+        RESULT_VARIABLE RPCS3_MOBILE_SAFETY_RESULT
+        OUTPUT_VARIABLE RPCS3_MOBILE_SAFETY_OUTPUT
+        ERROR_VARIABLE RPCS3_MOBILE_SAFETY_ERROR)
+    if(NOT RPCS3_MOBILE_SAFETY_RESULT EQUAL 0)
+        message(FATAL_ERROR
+            "Could not apply VSHift's RPCS3 mobile safety patch: "
+            "${RPCS3_MOBILE_SAFETY_OUTPUT}${RPCS3_MOBILE_SAFETY_ERROR}")
+    endif()
+endif()
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(

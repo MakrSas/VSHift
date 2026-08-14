@@ -1,0 +1,203 @@
+diff --git a/rpcs3/Crypto/unself.cpp b/rpcs3/Crypto/unself.cpp
+index e6b166da2..8da1b11ac 100644
+--- a/rpcs3/Crypto/unself.cpp
++++ b/rpcs3/Crypto/unself.cpp
+@@ -6,6 +6,19 @@
+ #include "Emu/system_utils.hpp"
+ #include "Crypto/unzip.h"
+ 
++#include <limits>
++
++namespace
++{
++// VSHIFT_RPCS3_SELF_LIMITS
++// PS3 firmware packages are large, but each SELF metadata/data section is
++// still bounded well below these values. The limits keep malformed PUP input
++// from turning the iPhone process into an unbounded allocator.
++constexpr u64 kMaxSelfMetadataBytes = 16ull * 1024ull * 1024ull;
++constexpr u64 kMaxSelfDataBytes = 768ull * 1024ull * 1024ull;
++constexpr usz kMaxSelfDecompressedSectionBytes = 512ull * 1024ull * 1024ull;
++}
++
+ inline u8 Read8(const fs::file& f)
+ {
+ 	u8 ret;
+@@ -626,6 +639,15 @@ bool SCEDecrypter::LoadHeaders()
+ bool SCEDecrypter::LoadMetadata(const u8 erk[32], const u8 riv[16])
+ {
+ 	aes_context aes;
++	const u64 metadata_fixed_size = sizeof(sce_hdr) + sce_hdr.se_meta + sizeof(meta_info);
++	if (sce_hdr.se_hsize < metadata_fixed_size ||
++		sce_hdr.se_hsize > sce_f.size() ||
++		sce_hdr.se_hsize - metadata_fixed_size > kMaxSelfMetadataBytes)
++	{
++		self_log.error("SELF metadata header exceeds the mobile safety limit");
++		return false;
++	}
++
+ 	std::vector<u8> metadata_info(sizeof(meta_info));
+ 	std::vector<u8> metadata_headers(sce_hdr.se_hsize - (sizeof(sce_hdr) + sce_hdr.se_meta + sizeof(meta_info)));
+ 
+@@ -674,6 +696,13 @@ bool SCEDecrypter::LoadMetadata(const u8 erk[32], const u8 riv[16])
+ 
+ 	// Load the metadata section headers.
+ 	meta_shdr.clear();
++	if (metadata_headers.size() < sizeof(meta_hdr) ||
++		meta_hdr.section_count >
++		(metadata_headers.size() - sizeof(meta_hdr)) / sizeof(MetadataSectionHeader))
++	{
++		self_log.error("SELF metadata section table is outside its bounded header");
++		return false;
++	}
+ 	for (u32 i = 0; i < meta_hdr.section_count; i++)
+ 	{
+ 		const usz shdr_offset = sizeof(meta_hdr) + sizeof(MetadataSectionHeader) * i;
+@@ -684,9 +713,16 @@ bool SCEDecrypter::LoadMetadata(const u8 erk[32], const u8 riv[16])
+ 	}
+ 
+ 	// Copy the decrypted data keys.
+-	data_keys.resize(static_cast<u64>(meta_hdr.key_count) * 0x10);
++	const u64 data_keys_size = static_cast<u64>(meta_hdr.key_count) * 0x10;
+ 
+ 	const usz data_keys_offset = sizeof(meta_hdr) + meta_hdr.section_count * sizeof(MetadataSectionHeader);
++	if (data_keys_size > kMaxSelfMetadataBytes ||
++		data_keys_size > metadata_headers.size() - data_keys_offset)
++	{
++		self_log.error("SELF metadata key table exceeds its bounded header");
++		return false;
++	}
++	data_keys.resize(static_cast<usz>(data_keys_size));
+ 	ensure(metadata_headers.size() >= (data_keys_offset + data_keys.size()));
+ 	ensure(data_keys.size() <= (usz{umax} - data_keys_offset)); // Check for overflow
+ 	std::memcpy(data_keys.data(), metadata_headers.data() + data_keys_offset, data_keys.size());
+@@ -702,7 +738,15 @@ bool SCEDecrypter::DecryptData()
+ 	// Calculate the total data size.
+ 	for (const MetadataSectionHeader& hdr : meta_shdr)
+ 	{
+-		data_buf_length += ::narrow<u32>(hdr.data_size);
++		if (hdr.data_size > std::numeric_limits<u32>::max() ||
++			hdr.data_size > kMaxSelfDataBytes - data_buf_length ||
++			hdr.data_offset > sce_f.size() ||
++			hdr.data_size > sce_f.size() - hdr.data_offset)
++		{
++			self_log.error("SELF section exceeds the mobile safety limit");
++			return false;
++		}
++		data_buf_length += static_cast<usz>(hdr.data_size);
+ 	}
+ 
+ 	// Allocate a buffer to store decrypted data.
+@@ -718,6 +762,12 @@ bool SCEDecrypter::DecryptData()
+ 	// Parse the metadata section headers to find the offsets of encrypted data.
+ 	for (const MetadataSectionHeader& hdr : meta_shdr)
+ 	{
++		if (hdr.data_size > kMaxSelfDecompressedSectionBytes)
++		{
++			self_log.error("SELF section is too large for the mobile safety limit");
++			return {};
++		}
++
+ 		// Check if this is an encrypted section.
+ 		if (hdr.encrypted == 3)
+ 		{
+@@ -776,6 +826,12 @@ std::vector<fs::file> SCEDecrypter::MakeFile()
+ 	// Write data.
+ 	for (const MetadataSectionHeader& hdr : meta_shdr)
+ 	{
++		if (data_buf_offset > data_buf.size() ||
++			hdr.data_size > data_buf.size() - data_buf_offset)
++		{
++			self_log.error("SELF section data range is outside the decrypted buffer");
++			return {};
++		}
+ 		const u8* src = data_buf.data() + data_buf_offset;
+ 		fs::file out_f = fs::make_stream<std::vector<u8>>();
+ 
+@@ -784,7 +840,8 @@ std::vector<fs::file> SCEDecrypter::MakeFile()
+ 		// Decompress if necessary.
+ 		if (hdr.compressed == 2)
+ 		{
+-			is_valid = unzip(src, hdr.data_size, out_f);
++			is_valid = unzip(src, hdr.data_size, out_f,
++				kMaxSelfDecompressedSectionBytes);
+ 		}
+ 		else
+ 		{
+diff --git a/rpcs3/Crypto/unzip.cpp b/rpcs3/Crypto/unzip.cpp
+index 6485e4d94..82f8273c4 100644
+--- a/rpcs3/Crypto/unzip.cpp
++++ b/rpcs3/Crypto/unzip.cpp
+@@ -64,7 +64,7 @@ std::vector<u8> unzip(const void* src, usz size)
+ 	return out;
+ }
+ 
+-bool unzip(const void* src, usz size, fs::file& out)
++bool unzip(const void* src, usz size, fs::file& out, usz max_output)
+ {
+ 	if (!src || !size || !out)
+ 	{
+@@ -100,10 +100,20 @@ bool unzip(const void* src, usz size, fs::file& out)
+ 		if (res != Z_OK)
+ 			is_valid = false;
+ 
++		if (!is_valid)
++			break;
++
+ 		if (strm.avail_out)
+ 			break;
+ 
+-		if (out.write(tempbuf.data(), tempbuf.size()) != tempbuf.size())
++		const usz bytes_to_write = tempbuf.size();
++		if (out.size() > max_output || bytes_to_write > max_output - out.size())
++		{
++			is_valid = false;
++			break;
++		}
++
++		if (out.write(tempbuf.data(), bytes_to_write) != bytes_to_write)
+ 		{
+ 			is_valid = false;
+ 		}
+@@ -112,6 +122,12 @@ bool unzip(const void* src, usz size, fs::file& out)
+ 		strm.avail_out = static_cast<uInt>(tempbuf.size());
+ 	}
+ 
++	if (!is_valid)
++	{
++		inflateEnd(&strm);
++		return false;
++	}
++
+ 	res = inflate(&strm, Z_FINISH);
+ 
+ 	if (res != Z_STREAM_END)
+@@ -120,6 +136,11 @@ bool unzip(const void* src, usz size, fs::file& out)
+ 	if (strm.avail_out < tempbuf.size())
+ 	{
+ 		const usz bytes_to_write = tempbuf.size() - strm.avail_out;
++		if (out.size() > max_output || bytes_to_write > max_output - out.size())
++		{
++			inflateEnd(&strm);
++			return false;
++		}
+ 
+ 		if (out.write(tempbuf.data(), bytes_to_write) != bytes_to_write)
+ 		{
+diff --git a/rpcs3/Crypto/unzip.h b/rpcs3/Crypto/unzip.h
+index 58de49ca0..f7e45fbfd 100644
+--- a/rpcs3/Crypto/unzip.h
++++ b/rpcs3/Crypto/unzip.h
+@@ -8,7 +8,9 @@ inline std::vector<u8> unzip(const T& src)
+ 	return unzip(src.data(), src.size());
+ }
+ 
+-bool unzip(const void* src, usz size, fs::file& out);
++// max_output protects mobile callers from a compressed stream expanding
++// without bound. umax keeps the upstream behavior for trusted callers.
++bool unzip(const void* src, usz size, fs::file& out, usz max_output = umax);
+ 
+ template <typename T>
+ inline bool unzip(const std::vector<u8>& src, fs::file& out)
+warning: in the working copy of 'rpcs3/Crypto/unself.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'rpcs3/Crypto/unzip.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'rpcs3/Crypto/unzip.h', LF will be replaced by CRLF the next time Git touches it
