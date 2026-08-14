@@ -127,6 +127,9 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         "    file(REMOVE_RECURSE \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib\")\n"
         "endif()\n"
         "add_subdirectory(ffmpeg EXCLUDE_FROM_ALL)\n"
+        "if(EXISTS \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip\" AND NOT EXISTS \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/libavformat.a\")\n"
+        "    file(ARCHIVE_EXTRACT INPUT \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip\" DESTINATION \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg\")\n"
+        "endif()\n"
         "target_link_libraries(3rdparty_ffmpeg INTERFACE ffmpeg)\n"
         "target_include_directories(3rdparty_ffmpeg SYSTEM INTERFACE\n"
         "    \"\${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/include\")\n\n")
