@@ -125,6 +125,9 @@ int main() {
     assert(ps4.platform == vshift::loader::SelfPlatform::Ps4);
     assert(ps4.header.magic == vshift::loader::kPs4SelfMagic);
     assert(ps4.elf.header.machine == vshift::loader::kElfMachineX86_64);
+    assert(ps4.entries[0].is_encrypted());
+    assert(!ps4.entries[0].is_compressed());
+    assert(!ps4.entries[0].is_blocked());
 
     const auto dispatched =
         vshift::loader::ParseSelfHeaders(header, kFileSize);

@@ -442,7 +442,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     }
     [summary appendFormat:@"\n%@\n%@",
         requiredPathsPresent
-            ? @"PS4 firmware root preflight passed; next stage is SELF payload mapping"
+            ? @"PS4 firmware root preflight passed; next stage is SELF payload availability"
             : @"Safe Mode preflight incomplete; choose the extracted firmware root",
         manifestSaved
             ? @"Manifest saved."
@@ -546,6 +546,14 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         }
 
         std::size_t loadCount = 0;
+        std::size_t encryptedCount = 0;
+        std::size_t compressedCount = 0;
+        std::size_t blockedCount = 0;
+        for (const auto &entry : parsedSelf.entries) {
+            encryptedCount += entry.is_encrypted() ? 1 : 0;
+            compressedCount += entry.is_compressed() ? 1 : 0;
+            blockedCount += entry.is_blocked() ? 1 : 0;
+        }
         for (const auto &program : parsedSelf.elf.program_headers) {
             if (program.type == vshift::loader::kElfProgramLoad) {
                 ++loadCount;
@@ -561,10 +569,16 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         probe[@"elf_program_headers"] = @(parsedSelf.elf.program_headers.size());
         probe[@"elf_load_segments"] = @(loadCount);
         probe[@"payload_map_count"] = @(mappings.size());
-        probe[@"payload_state"] =
-            mappings.size() == loadCount
-                ? @"size-correlated payload map; decryption pending"
-                : @"partial payload map; decryption pending";
+        probe[@"encrypted_entries"] = @(encryptedCount);
+        probe[@"compressed_entries"] = @(compressedCount);
+        probe[@"blocked_entries"] = @(blockedCount);
+        probe[@"payload_state"] = encryptedCount > 0
+            ? @"protected SELF payload; guest code unavailable"
+            : (compressedCount > 0
+                ? @"compressed SELF payload; decompression pending"
+                : (mappings.size() == loadCount
+                    ? @"payload map is executable-source ready"
+                    : @"partial payload map; source bytes pending"));
         [probes addObject:probe];
         ++validCount;
 
@@ -574,11 +588,13 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
                                 : [NSString stringWithFormat:@"machine %u",
                                     parsedSelf.elf.header.machine];
         [summary appendFormat:
-            @"\n✓ %@\n  SELF 0x%08x, ELF %@\n  Entry %@, PT_LOAD %lu, map %lu/%lu",
+            @"\n✓ %@\n  SELF 0x%08x, ELF %@\n  Entry %@, PT_LOAD %lu, map %lu/%lu\n  Payload: %lu encrypted, %lu compressed",
             relativePath, parsedSelf.header.magic, machine, probe[@"elf_entry"],
             static_cast<unsigned long>(loadCount),
             static_cast<unsigned long>(mappings.size()),
-            static_cast<unsigned long>(loadCount)];
+            static_cast<unsigned long>(loadCount),
+            static_cast<unsigned long>(encryptedCount),
+            static_cast<unsigned long>(compressedCount)];
     }
 
     NSDictionary *manifest = @{
@@ -589,7 +605,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         @"root_path": url.path ?: @"",
         @"self_probe": probes,
         @"boot_status": validCount > 0
-            ? @"PS4 SELF headers validated; payload execution pending"
+            ? @"PS4 SELF headers validated; protected payload availability reported"
             : @"No valid PS4 SELF entry was found",
     };
 
@@ -600,7 +616,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     const BOOL manifestSaved = [self writeManifest:manifest error:&manifestError];
     [summary appendFormat:@"\n%@\n%@",
         validCount > 0
-            ? @"Real PS4 SELF metadata is mapped; execution is the next stage."
+            ? @"Real PS4 SELF metadata is mapped; payload protection is the next blocker."
             : @"Choose the extracted Firmware 5.05 root.",
         manifestSaved
             ? @"Manifest saved."

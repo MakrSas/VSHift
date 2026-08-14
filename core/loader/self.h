@@ -14,6 +14,11 @@ constexpr std::size_t kSelfHeaderSize = 0x20;
 constexpr std::size_t kSelfEntrySize = 0x20;
 constexpr std::uint32_t kPs4SelfMagic = 0x1D3D154F;
 constexpr std::uint32_t kPs5SelfMagic = 0xEEF51454;
+constexpr std::uint64_t kSelfSegmentOrdered = 1ull << 0;
+constexpr std::uint64_t kSelfSegmentEncrypted = 1ull << 1;
+constexpr std::uint64_t kSelfSegmentSigned = 1ull << 2;
+constexpr std::uint64_t kSelfSegmentCompressed = 1ull << 3;
+constexpr std::uint64_t kSelfSegmentBlocked = 1ull << 11;
 
 enum class SelfPlatform : std::uint8_t {
     Unknown = 0,
@@ -40,6 +45,16 @@ struct SelfEntry final {
     std::uint64_t offset = 0;
     std::uint64_t compressed_size = 0;
     std::uint64_t uncompressed_size = 0;
+
+    bool is_encrypted() const noexcept {
+        return (flags & kSelfSegmentEncrypted) != 0;
+    }
+    bool is_compressed() const noexcept {
+        return (flags & kSelfSegmentCompressed) != 0;
+    }
+    bool is_blocked() const noexcept {
+        return (flags & kSelfSegmentBlocked) != 0;
+    }
 };
 
 struct SelfElfSummary final {
