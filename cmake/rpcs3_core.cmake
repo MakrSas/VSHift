@@ -33,20 +33,83 @@ set(USE_SYSTEM_FFMPEG OFF CACHE BOOL "" FORCE)
 set(BUILD_RPCS3_TESTS OFF CACHE BOOL "" FORCE)
 set(USE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 
-# The upstream tree uses this switch to omit Qt, desktop OpenGL, OpenAL, and
-# FFmpeg-only frontend pieces.  It is also the closest existing headless build
-# mode in RPCS3; the target still contains the real PPU/SPU, LV2/HLE, VFS,
-# firmware loader, and RSX code.
-set(ANDROID TRUE)
-# RPCS3 uses the Android CMake switch to omit desktop-only dependencies. zstd
-# also reads the Android API level while configuring, even for this headless
-# reuse on Apple platforms.
-set(ANDROID_PLATFORM_LEVEL 24 CACHE STRING "RPCS3 headless compatibility API" FORCE)
+# VSHift embeds the platform-neutral RPCS3 emulator library directly.  This is
+# intentionally a VSHift integration mode rather than a mobile-platform build:
+# Qt, desktop graphics, host USB/HID, and host audio backends are supplied by
+# adapters owned by VSHift when they are needed.
+set(VSHIFT_RPCS3_HEADLESS ON CACHE BOOL "Build RPCS3 as a VSHift platform-neutral core" FORCE)
 
-# The Android/headless branch of the current upstream CMake file does not
-# create this optional target before declaring its public alias.  Supplying an
-# interface target keeps that upstream build path intact without modifying the
-# submodule.
+function(vshift_patch_rpcs3_cmake_between file_path begin_marker end_marker)
+    string(JOIN "" replacement ${ARGN})
+    file(READ "${file_path}" file_text)
+    string(FIND "${file_text}" "${begin_marker}" begin_offset)
+    string(FIND "${file_text}" "${end_marker}" end_offset)
+    if(begin_offset EQUAL -1 OR end_offset EQUAL -1 OR end_offset LESS begin_offset)
+        message(FATAL_ERROR
+            "Could not patch RPCS3 CMake file '${file_path}' between '${begin_marker}' and '${end_marker}'")
+    endif()
+    string(SUBSTRING "${file_text}" 0 ${begin_offset} prefix)
+    string(SUBSTRING "${file_text}" ${end_offset} -1 suffix)
+    file(WRITE "${file_path}" "${prefix}${replacement}${suffix}")
+endfunction()
+
+# The upstream project owns the emulator sources, while this small configure
+# patch keeps its dependency graph usable for a non-desktop host.  It is
+# applied only in the checked-out submodule during configure and never changes
+# the pinned RPCS3 commit in the VSHift repository.
+set(RPCS3_3RDPARTY_CMAKE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/CMakeLists.txt")
+set(RPCS3_EMU_CMAKE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/CMakeLists.txt")
+file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
+if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
+    vshift_patch_rpcs3_cmake_between(
+        "${RPCS3_3RDPARTY_CMAKE}" "# libusb" "# hidapi"
+        "# VSHift headless integration: host USB passthrough is provided by a\n"
+        "# later platform adapter, so the emulator core does not require a\n"
+        "# desktop USB implementation during firmware boot.\n"
+        "add_library(usb-1.0-static INTERFACE)\n"
+        "add_library(usb-1.0-shared INTERFACE)\n\n")
+    vshift_patch_rpcs3_cmake_between(
+        "${RPCS3_3RDPARTY_CMAKE}" "# hidapi" "# glslang"
+        "# VSHift headless integration: physical controllers are translated by\n"
+        "# the frontend into the common input bridge.\n"
+        "add_library(3rdparty_hidapi INTERFACE)\n\n")
+    vshift_patch_rpcs3_cmake_between(
+        "${RPCS3_3RDPARTY_CMAKE}" "# OpenAL" "# FAudio"
+        "# VSHift headless integration: audio is routed through the common\n"
+        "# frontend audio adapter instead of a desktop OpenAL device.\n"
+        "add_library(3rdparty_openal INTERFACE)\n"
+        "target_compile_definitions(3rdparty_openal INTERFACE WITHOUT_OPENAL=1)\n\n")
+    vshift_patch_rpcs3_cmake_between(
+        "${RPCS3_3RDPARTY_CMAKE}" "# FFMPEG" "# GLEW"
+        "# VSHift headless integration: media decode is exposed through the\n"
+        "# frontend media adapter; keep the core independent of a desktop\n"
+        "# FFmpeg installation while the VSH boot path is brought up.\n"
+        "add_library(3rdparty_ffmpeg INTERFACE)\n"
+        "target_compile_definitions(3rdparty_ffmpeg INTERFACE VSHIFT_RPCS3_NO_HOST_MEDIA=1)\n\n")
+    file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
+    string(REPLACE
+        "if (NOT ANDROID AND NOT APPLE)"
+        "if (NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"
+        RPCS3_3RDPARTY_TEXT "${RPCS3_3RDPARTY_TEXT}")
+    string(REPLACE
+        "if(NOT MSVC AND NOT ANDROID AND NOT APPLE)"
+        "if(NOT MSVC AND NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"
+        RPCS3_3RDPARTY_TEXT "${RPCS3_3RDPARTY_TEXT}")
+    file(WRITE "${RPCS3_3RDPARTY_CMAKE}" "${RPCS3_3RDPARTY_TEXT}")
+
+    file(READ "${RPCS3_EMU_CMAKE}" RPCS3_EMU_TEXT)
+    string(REPLACE
+        "if(NOT ANDROID AND NOT APPLE)"
+        "if(NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"
+        RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+    file(WRITE "${RPCS3_EMU_CMAKE}" "${RPCS3_EMU_TEXT}")
+endif()
+
+# The headless dependency patch normally creates this optional target. Keep a
+# fallback for incremental configure directories where the patch already ran
+# but the target was not created by an older configure.
 if(NOT TARGET 3rdparty_ffmpeg)
     add_library(3rdparty_ffmpeg INTERFACE)
 endif()
@@ -74,6 +137,11 @@ target_include_directories(rpcs3_emu PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty")
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/libusb/libusb/libusb.h")
+    target_include_directories(rpcs3_emu PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/libusb/libusb")
+endif()
 
 target_compile_definitions(rpcs3_emu PUBLIC VSHIFT_RPCS3_HEADLESS=1)
 target_sources(rpcs3_emu PRIVATE

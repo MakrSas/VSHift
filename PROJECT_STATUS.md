@@ -27,8 +27,9 @@ target and its firmware installer behind a VSHift-owned mobile frontend.
   verified against the official SHA-256 file.
 - Local CMake configuration is intentionally deferred; GitHub Actions is the
   source of truth for the first host and iOS builds.
-- GitHub Actions host tests and iOS simulator compilation passed on the pushed
-  branch.
+- GitHub Actions is the source of truth; the latest run reached RPCS3
+  dependency configuration and exposed platform-specific desktop USB/HID
+  assumptions that are being removed from the headless integration profile.
 - A GitHub Actions job now packages an unsigned arm64 device IPA for the
   iLoader + StikDebug test path.
 - The upstream RPCS3 repository is pinned as `third_party/rpcs3` and its
@@ -70,12 +71,15 @@ target and its firmware installer behind a VSHift-owned mobile frontend.
 ## Not working yet
 
 - The RPCS3 headless build has not yet passed VSHift's GitHub Actions build.
-- The iOS adapter still needs to connect firmware selection to installation and
-  `Emulator::BootGame("/dev_flash/vsh/module/vsh.self")`.
+- The firmware installer and `Emulator::BootGame("/dev_flash/vsh/module/vsh.self")`
+  adapter are present, but the first successful cross-platform build is still
+  required before calling them a working boot milestone.
 - RSX presentation still needs a Metal/MoltenVK-backed callback that exposes
   the actual XMB frame; no synthetic XMB is allowed.
-- Input, audio, haptics, persistence, media import, ISO mounting, and the
-  UTM-style control drawer are not connected to RPCS3 yet.
+- Input, audio, haptics, persistence, and RSX presentation still need their
+  platform-neutral bridges. Media import, ISO mounting, and the UTM-style
+  control drawer have their first frontend/API layer but are not yet proven
+  against a running guest.
 - No Sony firmware or other copyrighted assets are committed or bundled.
 
 ## Current hypothesis

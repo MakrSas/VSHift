@@ -20,6 +20,6 @@ PlayStation proprietary material is included.
 
 The current RPCS3 submodule revision is
 `4c63acfb40b23da7e7ceee46c8fddd1acbeee152`.
-The PS3Native name is used by downstream Android forks/builds; no authoritative
-public PS3Native iOS source tree was found. VSHift therefore integrates the
-upstream RPCS3 core directly and keeps the mobile frontend independent.
+No authoritative public PS3Native iOS source tree was found. VSHift therefore
+integrates the upstream RPCS3 core directly and keeps the frontend, input,
+audio, and renderer adapters independent of any mobile operating system.
