@@ -73,6 +73,8 @@ set(RPCS3_CELLMIC_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/Modules/cellMic.cpp")
 set(RPCS3_CELLMIC_H
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/Modules/cellMic.h")
+set(RPCS3_THREAD_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/Utilities/Thread.cpp")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -171,6 +173,15 @@ endif()
 # uses VSHift's signed executable-memory bridge instead; make the upstream
 # guard a no-op on iOS while preserving the macOS implementation unchanged.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    file(READ "${RPCS3_THREAD_CPP}" RPCS3_THREAD_TEXT)
+    if(NOT RPCS3_THREAD_TEXT MATCHES "VSHIFT_RPCS3_IOS.*s_tls_is_attempting_recovery")
+        string(REPLACE
+            "#ifdef __APPLE__\n\tthread_local bool s_tls_is_attempting_recovery"
+            "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\tthread_local bool s_tls_is_attempting_recovery"
+            RPCS3_THREAD_TEXT "${RPCS3_THREAD_TEXT}")
+        file(WRITE "${RPCS3_THREAD_CPP}" "${RPCS3_THREAD_TEXT}")
+    endif()
+
     file(READ "${RPCS3_JIT_H}" RPCS3_JIT_TEXT)
     if(NOT RPCS3_JIT_TEXT MATCHES "VSHIFT_RPCS3_IOS")
         string(REPLACE
