@@ -91,6 +91,8 @@ set(RPCS3_SPUCOMMON_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp")
 set(RPCS3_CUBEB_CMAKE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/cubeb/cubeb/CMakeLists.txt")
+set(RPCS3_ASMJIT_VIRTMEM_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/asmjit/asmjit/src/asmjit/core/virtmem.cpp")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -189,6 +191,18 @@ endif()
 # uses VSHift's signed executable-memory bridge instead; make the upstream
 # guard a no-op on iOS while preserving the macOS implementation unchanged.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # AsmJit's Apple instruction-cache helper is macOS-only.  On iOS the
+    # SDK exposes __builtin___clear_cache instead, so let the generic GCC/Clang
+    # path handle the flush rather than referencing sys_icache_invalidate().
+    file(READ "${RPCS3_ASMJIT_VIRTMEM_CPP}" RPCS3_ASMJIT_VIRTMEM_TEXT)
+    if(NOT RPCS3_ASMJIT_VIRTMEM_TEXT MATCHES "__APPLE__ && TARGET_OS_OSX.*sys_icache_invalidate")
+        string(REPLACE
+            "#elif defined(__APPLE__)\n  sys_icache_invalidate(p, size);"
+            "#elif defined(__APPLE__) && TARGET_OS_OSX\n  sys_icache_invalidate(p, size);"
+            RPCS3_ASMJIT_VIRTMEM_TEXT "${RPCS3_ASMJIT_VIRTMEM_TEXT}")
+        file(WRITE "${RPCS3_ASMJIT_VIRTMEM_CPP}" "${RPCS3_ASMJIT_VIRTMEM_TEXT}")
+    endif()
+
     # The embedded cubeb project detects AudioUnit on iOS, then adds its
     # macOS CoreAudio run-loop helper.  That helper includes the macOS-only
     # CoreAudio/AudioHardware.h header.  VSHift intentionally uses the
