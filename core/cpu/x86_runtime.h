@@ -14,6 +14,8 @@ struct GuestRegisters final {
     std::uint64_t general[kGuestRegisterCount] = {};
     std::uint64_t rip = 0;
     std::uint64_t rflags = 0x202;
+    std::uint64_t fs_base = 0;
+    std::uint64_t gs_base = 0;
 
     std::uint64_t& rax() noexcept { return general[0]; }
     std::uint64_t& rcx() noexcept { return general[1]; }
@@ -29,6 +31,8 @@ struct GuestCpuConfig final {
     std::uint64_t max_instructions = 1'000'000;
     std::uint64_t stack_top = 0x7fff'ff80'0000ull;
     std::uint64_t stack_size = 0x20'0000;
+    std::uint64_t fs_base = 0;
+    std::uint64_t gs_base = 0;
 };
 
 using SyscallHandler = std::function<bool(GuestRegisters&)>;

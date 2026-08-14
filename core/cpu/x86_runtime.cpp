@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 namespace vshift::cpu {
 
@@ -63,7 +64,8 @@ bool DecodeOperand(Cursor& cursor,
                    GuestRegisters& registers,
                    std::uint8_t rex,
                    std::uint8_t modrm,
-                   Operand& operand) {
+                   Operand& operand,
+                   std::uint64_t segment_base = 0) {
     const auto mod = static_cast<std::uint8_t>(modrm >> 6);
     const auto rm = static_cast<std::uint8_t>(modrm & 7);
     if (mod == 3) {
@@ -133,6 +135,10 @@ bool DecodeOperand(Cursor& cursor,
         }
     }
 
+    if (segment_base > std::numeric_limits<std::uint64_t>::max() - base) {
+        return false;
+    }
+    base += segment_base;
     operand.is_register = false;
     return AddSigned(base, displacement, operand.address);
 }
@@ -254,6 +260,8 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
                         const SyscallHandler& syscall_handler) {
     GuestCpuResult result;
     result.registers.rip = entry;
+    result.registers.fs_base = config.fs_base;
+    result.registers.gs_base = config.gs_base;
     result.registers.rsp() = config.stack_top - sizeof(std::uint64_t);
     const auto stackMapping = memory.Map({
         config.stack_top - config.stack_size,
@@ -277,10 +285,19 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
         const auto instructionRip = result.registers.rip;
         Cursor cursor{memory, instructionRip};
         std::uint8_t rex = 0;
+        std::uint64_t segment_base = 0;
         std::uint8_t opcode = 0;
         if (!cursor.Read8(opcode)) {
             result.error = "guest instruction fetch failed";
             return result;
+        }
+        if (opcode == 0x64 || opcode == 0x65) {
+            segment_base = opcode == 0x64 ? result.registers.fs_base
+                                          : result.registers.gs_base;
+            if (!cursor.Read8(opcode)) {
+                result.error = "truncated segment-prefixed instruction";
+                return result;
+            }
         }
         if ((opcode & 0xf0) == 0x40) {
             rex = opcode;
@@ -333,6 +350,53 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
             }
             result.registers.rip = target;
             advance = false;
+            break;
+        }
+        case 0xc9:
+            result.registers.rsp() = result.registers.rbp();
+            if (!memory.Read(result.registers.rsp(),
+                             std::span(reinterpret_cast<std::uint8_t*>(
+                                           &result.registers.rbp()),
+                                       sizeof(std::uint64_t))).ok()) {
+                result.error = "guest leave stack read failed";
+                return result;
+            }
+            result.registers.rsp() += sizeof(std::uint64_t);
+            break;
+        case 0x68: {
+            std::int32_t immediate = 0;
+            if (!cursor.Read(immediate)) {
+                result.error = "truncated push imm32";
+                return result;
+            }
+            const auto value = static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(immediate));
+            result.registers.rsp() -= sizeof(value);
+            if (!memory.Write(
+                    result.registers.rsp(),
+                    std::span(reinterpret_cast<const std::uint8_t*>(&value),
+                              sizeof(value))).ok()) {
+                result.error = "guest push imm32 failed";
+                return result;
+            }
+            break;
+        }
+        case 0x6a: {
+            std::int8_t immediate = 0;
+            if (!cursor.Read(immediate)) {
+                result.error = "truncated push imm8";
+                return result;
+            }
+            const auto value = static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(immediate));
+            result.registers.rsp() -= sizeof(value);
+            if (!memory.Write(
+                    result.registers.rsp(),
+                    std::span(reinterpret_cast<const std::uint8_t*>(&value),
+                              sizeof(value))).ok()) {
+                result.error = "guest push imm8 failed";
+                return result;
+            }
             break;
         }
         case 0x50 ... 0x57: {
@@ -442,7 +506,8 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
                 return result;
             }
             Operand operand;
-            if (!DecodeOperand(cursor, result.registers, rex, modrm, operand)) {
+            if (!DecodeOperand(cursor, result.registers, rex, modrm, operand,
+                                segment_base)) {
                 result.error = "invalid 0x83 operand";
                 return result;
             }
@@ -487,6 +552,24 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
             }
             break;
         }
+        case 0x70 ... 0x73:
+        case 0x76 ... 0x7f: {
+            std::int8_t displacement = 0;
+            if (!cursor.Read(displacement)) {
+                result.error = "truncated short conditional jump";
+                return result;
+            }
+            if (Condition(static_cast<std::uint8_t>(opcode - 0x70),
+                          result.registers)) {
+                if (!AddSigned(cursor.address, displacement,
+                               result.registers.rip)) {
+                    result.error = "short conditional jump target overflow";
+                    return result;
+                }
+                advance = false;
+            }
+            break;
+        }
         case 0x31:
         case 0x33:
         case 0x39:
@@ -504,7 +587,8 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
             const auto reg = static_cast<std::uint8_t>(
                 ((modrm >> 3) & 7) | ((rex & 4) ? 8 : 0));
             Operand operand;
-            if (!DecodeOperand(cursor, result.registers, rex, modrm, operand)) {
+            if (!DecodeOperand(cursor, result.registers, rex, modrm, operand,
+                                segment_base)) {
                 result.error = "invalid ModRM operand";
                 return result;
             }
@@ -579,6 +663,44 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
                             opcode == 0x39 ? right : left, value, 64);
             }
             (void)mod;
+            break;
+        }
+        case 0xff: {
+            std::uint8_t modrm = 0;
+            if (!cursor.Read8(modrm)) {
+                result.error = "truncated FF instruction";
+                return result;
+            }
+            const auto operation = static_cast<std::uint8_t>((modrm >> 3) & 7);
+            if (operation != 2 && operation != 4) {
+                result.error = OpcodeError(instructionRip, opcode,
+                                            "only indirect call/jump are implemented");
+                return result;
+            }
+            Operand operand;
+            if (!DecodeOperand(cursor, result.registers, rex, modrm, operand,
+                                segment_base)) {
+                result.error = "invalid FF operand";
+                return result;
+            }
+            std::uint64_t target = 0;
+            if (!ReadOperand(memory, operand, target, result.registers)) {
+                result.error = "indirect branch target read failed";
+                return result;
+            }
+            if (operation == 2) {
+                const auto returnAddress = cursor.address;
+                result.registers.rsp() -= sizeof(returnAddress);
+                if (!memory.Write(
+                        result.registers.rsp(),
+                        std::span(reinterpret_cast<const std::uint8_t*>(
+                                      &returnAddress), sizeof(returnAddress))).ok()) {
+                    result.error = "indirect call stack write failed";
+                    return result;
+                }
+            }
+            result.registers.rip = target;
+            advance = false;
             break;
         }
         case 0x48: // unreachable after REX handling; documents invalid path
