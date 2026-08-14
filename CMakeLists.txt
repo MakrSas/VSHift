@@ -19,6 +19,7 @@ add_library(vshift_core STATIC
     core/cpu/x86_decoder.cpp
     core/memory/guest_memory.cpp
     core/loader/elf.cpp
+    core/loader/elf_dynamic.cpp
     core/loader/elf_loader.cpp
     core/loader/self.cpp
     core/loader/self_loader.cpp
@@ -93,6 +94,11 @@ if(VSHIFT_BUILD_TESTS)
     )
     target_link_libraries(vshift_elf_loader_test PRIVATE vshift_core)
 
+    add_executable(vshift_elf_dynamic_test
+        tests/elf_dynamic_test.cpp
+    )
+    target_link_libraries(vshift_elf_dynamic_test PRIVATE vshift_core)
+
     add_executable(vshift_self_test
         tests/self_test.cpp
     )
@@ -133,6 +139,7 @@ if(VSHIFT_BUILD_TESTS)
     add_test(NAME vshift_elf_test COMMAND vshift_elf_test)
     add_test(NAME vshift_guest_memory_test COMMAND vshift_guest_memory_test)
     add_test(NAME vshift_elf_loader_test COMMAND vshift_elf_loader_test)
+    add_test(NAME vshift_elf_dynamic_test COMMAND vshift_elf_dynamic_test)
     add_test(NAME vshift_self_test COMMAND vshift_self_test)
     add_test(NAME vshift_ps4_boot_test COMMAND vshift_ps4_boot_test)
     add_test(NAME vshift_x86_runtime_test COMMAND vshift_x86_runtime_test)
