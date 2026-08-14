@@ -59,6 +59,12 @@ segment discovery, and metadata-only SELF/ELF mapping.
 - Added a local helper that expands the already decrypted PUP entries and
   preserves the user-provided exFAT system images for a separate filesystem
   extraction step.
+- After the PS3 RPCS3 experiment was found to be too broad for the current
+  iOS profile, `main` was rolled back to `e53654d` and verified green by
+  GitHub Actions run `31805042046`. The run produced the unsigned device IPA
+  artifact `vshift-ios-device-unsigned-ipa`.
+- The attempted PS3 integration is preserved on `ps3-experimental` at
+  `557f5c0`; it is intentionally not presented as a working PS3 emulator.
 
 ## Not working yet
 
@@ -104,3 +110,19 @@ ctest --test-dir build --output-on-failure -C Release
 - Actual PS5 VSH boot still requires file-backed guest VFS, SELF payload
   decryption/mapping, PS5 ABI/HLE, runtime linking, GPU, and input/audio work;
   no claim of VSH support is made yet.
+
+## 2026-08-14 handoff state
+
+The stable line is `main` at `e53654d`. The PS3 RPCS3 experiment was moved to
+`ps3-experimental` after its iOS device build failed at the final link step.
+The immediate failure was an undefined
+`ppu_module_manager::cellAtracXdec` referenced by `cellAdec` after the
+headless profile excluded `cellAtracXdec.cpp`. This is evidence that the
+RPCS3 module graph cannot be reduced by removing media sources one at a time
+without preserving all dependent module boundaries.
+
+The next PS3 attempt must therefore be incremental: first select a minimal
+RPCS3 source/profile that links unchanged, then add one independent boot
+component at a time, with a separate Actions build after each component.
+Do not add another large collection of iOS stubs or omit module-table entries
+without tracing every static reference to them.

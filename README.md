@@ -1,8 +1,10 @@
 # VSHift
 
-VSHift is an experimental research project for a modular PS4 System Software /
-VSH execution environment on ARM64 iPhone hardware. The active PS4 line is
-`main`; the paused PS5 implementation is preserved in `ps5`.
+VSHift is an experimental research project for modular PlayStation System
+Software / VSH execution environments on ARM64 iPhone hardware. The active
+verified line is the PS4-oriented `main`; the paused PS5 implementation is
+preserved in `ps5`, and the unverified PS3/RPCS3 experiment is preserved in
+`ps3-experimental`.
 
 The repository does not contain Sony firmware, keys, decrypted system files, or
 copyrighted assets. Firmware is planned as a user-provided runtime input.
@@ -17,6 +19,10 @@ See [docs/BRANCHES.md](docs/BRANCHES.md) for the branch policy.
 
 See [PROJECT_STATUS.md](PROJECT_STATUS.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
 and [docs/UPSTREAM_RESEARCH.md](docs/UPSTREAM_RESEARCH.md).
+
+For the current PS3 experiment, read
+[docs/PS3_EXPERIMENTAL.md](docs/PS3_EXPERIMENTAL.md) before changing the
+RPCS3 integration.
 
 ## Build
 
