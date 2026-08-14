@@ -75,6 +75,8 @@ set(RPCS3_CELLMIC_H
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/Modules/cellMic.h")
 set(RPCS3_THREAD_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/Utilities/Thread.cpp")
+set(RPCS3_SYSTEM_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/System.cpp")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -180,6 +182,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\tthread_local bool s_tls_is_attempting_recovery"
             RPCS3_THREAD_TEXT "${RPCS3_THREAD_TEXT}")
         file(WRITE "${RPCS3_THREAD_CPP}" "${RPCS3_THREAD_TEXT}")
+    endif()
+
+    file(READ "${RPCS3_SYSTEM_CPP}" RPCS3_SYSTEM_TEXT)
+    if(NOT RPCS3_SYSTEM_TEXT MATCHES "VSHIFT_RPCS3_IOS.*Apple Silicon W\\^X")
+        string(REPLACE
+            "#ifdef __APPLE__\n\t\t\t\t// Apple Silicon W^X"
+            "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\t\t\t\t// Apple Silicon W^X"
+            RPCS3_SYSTEM_TEXT "${RPCS3_SYSTEM_TEXT}")
+        file(WRITE "${RPCS3_SYSTEM_CPP}" "${RPCS3_SYSTEM_TEXT}")
     endif()
 
     file(READ "${RPCS3_JIT_H}" RPCS3_JIT_TEXT)
