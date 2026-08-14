@@ -1,4 +1,5 @@
 #include "third_party/rpcs3/rpcs3/Emu/RSX/rsx_utils.h"
+#include "third_party/rpcs3/rpcs3/Emu/Cell/Modules/cellVideoOut.h"
 
 #include <algorithm>
 #include <cstring>
