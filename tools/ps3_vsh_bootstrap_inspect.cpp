@@ -2,6 +2,7 @@
 #include "core/firmware/ps3_pup.h"
 #include "core/firmware/ps3_tar.h"
 #include "core/cpu/ppu_runtime.h"
+#include "core/hle/ps3_lv2.h"
 #include "core/loader/ps3_sce.h"
 #include "core/loader/ps3_self.h"
 
@@ -219,11 +220,50 @@ int main(int argc, char** argv) {
     }
     std::cout << '\n'
               << "  PPU: starting VSH entry descriptor\n";
+    for (const auto address : {0x609100ull, 0x609200ull, 0x609300ull,
+                               0x60d000ull, 0x60d100ull,
+                               0x9d8c0ull, 0x9d9c0ull, 0x9b300ull,
+                               0x9b400ull, 0x9b500ull,
+                               0x9b560ull,
+                               0x60d240ull, 0x60d700ull, 0x60d800ull,
+                               0xc9480ull,
+                               0x60bdc0ull,
+                               0x6180c0ull, 0x618100ull, 0x618140ull,
+                               0x618180ull, 0x6181c0ull}) {
+        std::array<std::uint8_t, 0x100> bytes{};
+        if (memory.Read(address, bytes).ok()) {
+            std::cout << "  code 0x" << std::hex << address << ":";
+            for (const auto byte : bytes) {
+                std::cout << ' ' << static_cast<unsigned>(byte);
+            }
+            std::cout << std::dec << '\n';
+        }
+    }
     const auto stack_map = memory.Map({
         0x0c000000, 0x01000000,
         vshift::memory::kPermissionRead | vshift::memory::kPermissionWrite});
     if (!stack_map.ok()) {
         std::cerr << "PPU stack map failed: " << stack_map.error << '\n';
+        return 1;
+    }
+    const auto write_guest_u64 = [&](std::uint64_t address, std::uint64_t value) {
+        std::array<std::uint8_t, 8> bytes{};
+        for (std::size_t index = 0; index < bytes.size(); ++index) {
+            bytes[index] = static_cast<std::uint8_t>(
+                value >> ((bytes.size() - index - 1) * 8));
+        }
+        return memory.Write(address, bytes).ok();
+    };
+    constexpr std::uint64_t argv_address = 0x0cffe000;
+    constexpr std::uint64_t envp_address = 0x0cffe020;
+    constexpr std::uint64_t process_name_address = 0x0cffe100;
+    const std::array<std::uint8_t, 12> process_name{
+        'v', 's', 'h', '.', 's', 'e', 'l', 'f', 0, 0, 0, 0};
+    if (!memory.Write(process_name_address, process_name).ok() ||
+        !write_guest_u64(argv_address, process_name_address) ||
+        !write_guest_u64(argv_address + 8, 0) ||
+        !write_guest_u64(envp_address, 0)) {
+        std::cerr << "PPU process argument setup failed\n";
         return 1;
     }
     std::uint32_t descriptor_code = 0;
@@ -242,11 +282,151 @@ int main(int argc, char** argv) {
         std::cerr << "PPU entry descriptor is unreadable\n";
         return 1;
     }
+    vshift::hle::Ps3Lv2 lv2(memory);
     vshift::cpu::PpuRuntime ppu(memory);
     ppu.registers().pc = descriptor_code;
     ppu.registers().gpr[1] = 0x0cfff000;
     ppu.registers().gpr[2] = descriptor_toc;
-    const auto ppu_result = ppu.Run(100000);
+    // ELFv1 function-descriptor calls enter the function with r12 carrying
+    // the code address. VSH preserves it during its startup trampoline.
+    ppu.registers().gpr[12] = descriptor_code;
+    ppu.registers().gpr[3] = 1;
+    ppu.registers().gpr[4] = argv_address;
+    ppu.registers().gpr[5] = envp_address;
+    vshift::cpu::PpuRunResult ppu_result;
+    std::size_t total_instructions = 0;
+    bool abort_entry_reported = false;
+    std::size_t lwmutex_watch_count = 0;
+    bool lwmutex_result_reported = false;
+    bool abort_call_site_reported = false;
+    std::size_t observed_lv2_calls = 0;
+    while (total_instructions < 5000000) {
+        if (!abort_call_site_reported && ppu.registers().pc == 0x9b598) {
+            abort_call_site_reported = true;
+            std::cout << "  abort-check callsite r31=0x" << std::hex
+                      << ppu.registers().gpr[31] << "\n" << std::dec;
+        }
+        if (ppu.registers().lr == 0x9b434 &&
+            ppu.registers().pc >= 0x60d2a0 &&
+            ppu.registers().pc <= 0x60d2e4) {
+            std::cout << "  lwmutex step pc=0x" << std::hex << ppu.registers().pc
+                      << " r3=0x" << ppu.registers().gpr[3]
+                      << " r9=0x" << ppu.registers().gpr[9]
+                      << " r10=0x" << ppu.registers().gpr[10]
+                      << " r11=0x" << ppu.registers().gpr[11]
+                      << " cr=0x" << ppu.registers().condition_register
+                      << "\n" << std::dec;
+        }
+        if (ppu.registers().pc == 0x60d100 ||
+            ppu.registers().pc == 0x60d110) {
+            std::cout << "  lwmutex init pc=0x" << std::hex
+                      << ppu.registers().pc << " r0=0x"
+                      << ppu.registers().gpr[0] << " r3=0x"
+                      << ppu.registers().gpr[3] << " r31=0x"
+                      << ppu.registers().gpr[31] << "\n" << std::dec;
+        }
+        if (ppu.registers().pc == 0x9b51c ||
+            ppu.registers().pc == 0x9b52c) {
+            std::array<std::uint8_t, 0x14> bytes{};
+            memory.Read(0x70d148, bytes);
+            std::cout << "  mutex-check pc=0x" << std::hex << ppu.registers().pc
+                      << " r3=0x" << ppu.registers().gpr[3]
+                      << " tls=0x" << ppu.registers().gpr[13]
+                      << " data:";
+            for (const auto byte : bytes) {
+                std::cout << ' ' << static_cast<unsigned>(byte);
+            }
+            std::cout << std::dec << '\n';
+        }
+        if (ppu.registers().pc == 0x60d2a0 &&
+            (lwmutex_watch_count < 12 || ppu.registers().lr == 0x9b5a0 ||
+             ppu.registers().gpr[3] == 0x70d148)) {
+            ++lwmutex_watch_count;
+            std::cout << "  lwmutex helper entry r3=0x" << std::hex
+                      << ppu.registers().gpr[3] << " r13=0x"
+                      << ppu.registers().gpr[13] << " r0=0x"
+                      << ppu.registers().gpr[0] << " lr=0x"
+                      << ppu.registers().lr << "\n";
+        }
+        if (!lwmutex_result_reported && ppu.registers().pc == 0x9b5d0) {
+            lwmutex_result_reported = true;
+            std::cout << "  lwmutex helper result r3=0x" << std::hex
+                      << ppu.registers().gpr[3] << "\n" << std::dec;
+        }
+        const auto slice = ppu.Run(1, [&](auto& registers, auto& error) {
+            return lv2.Dispatch(registers, error);
+        }, [&](auto& registers) { lv2.PrepareThread(registers); });
+        while (observed_lv2_calls < lv2.trace().size()) {
+            const auto& call = lv2.trace()[observed_lv2_calls++];
+            if (call.syscall == 95) {
+                std::array<std::uint8_t, 0x14> bytes{};
+                if (memory.Read(call.arguments[2], bytes).ok()) {
+                    std::cout << "  lwmutex control after create 0x" << std::hex
+                              << call.arguments[2] << ":";
+                    for (const auto byte : bytes) {
+                        std::cout << ' ' << static_cast<unsigned>(byte);
+                    }
+                    std::cout << std::dec << '\n';
+                }
+            }
+            if (call.syscall == 497) {
+                std::array<std::uint8_t, 0x80> path_bytes{};
+                if (memory.Read(call.arguments[0], path_bytes).ok()) {
+                    std::cout << "  PRX path: ";
+                    for (const auto byte : path_bytes) {
+                        if (byte == 0) break;
+                        std::cout << static_cast<char>(byte);
+                    }
+                    std::cout << '\n';
+                }
+            }
+            if (call.syscall == 481) {
+                std::array<std::uint8_t, 0x28> option_bytes{};
+                if (memory.Read(call.arguments[2], option_bytes).ok()) {
+                    std::cout << "  PRX start option:";
+                    for (std::size_t offset = 0; offset + 8 <= option_bytes.size();
+                         offset += 8) {
+                        std::uint64_t value = 0;
+                        for (std::size_t index = 0; index < 8; ++index) {
+                            value = (value << 8) | option_bytes[offset + index];
+                        }
+                        std::cout << " 0x" << std::hex << value;
+                    }
+                    std::cout << std::dec << '\n';
+                }
+            }
+        }
+        total_instructions += slice.instructions;
+        if (!abort_entry_reported && ppu.registers().pc == 0x9d8c4) {
+            abort_entry_reported = true;
+            std::cout << "  abort handler entered; caller LR=0x" << std::hex
+                      << ppu.registers().lr << " r3=0x" << ppu.registers().gpr[3]
+                      << " r4=0x" << ppu.registers().gpr[4]
+                      << " r13=0x" << ppu.registers().gpr[13]
+                      << " r31=0x" << ppu.registers().gpr[31]
+                      << std::dec << '\n';
+            for (const auto address : {ppu.registers().gpr[13] - 0x7030,
+                                       ppu.registers().gpr[31] + 0x18,
+                                       0x70d148ull, 0x70d188ull,
+                                       0x70d318ull}) {
+                std::array<std::uint8_t, 0x10> bytes{};
+                if (memory.Read(address, bytes).ok()) {
+                    std::cout << "    data 0x" << std::hex << address << ":";
+                    for (const auto byte : bytes) {
+                        std::cout << ' ' << static_cast<unsigned>(byte);
+                    }
+                    std::cout << std::dec << '\n';
+                }
+            }
+        }
+        if (slice.reason != vshift::cpu::PpuStopReason::StepLimit) {
+            ppu_result = slice;
+            ppu_result.instructions = total_instructions;
+            break;
+        }
+        ppu_result = slice;
+    }
+    ppu_result.instructions = total_instructions;
     const auto reason = [&]() {
         switch (ppu_result.reason) {
         case vshift::cpu::PpuStopReason::StepLimit: return "step-limit";
@@ -262,10 +442,55 @@ int main(int argc, char** argv) {
               << "  PPU PC: 0x" << std::hex << ppu_result.registers.pc
               << " instruction: 0x" << ppu_result.instruction
               << " syscall/r11: 0x" << ppu_result.registers.gpr[11]
+              << " r3: 0x" << ppu_result.registers.gpr[3]
+              << " r4: 0x" << ppu_result.registers.gpr[4]
+              << " r5: 0x" << ppu_result.registers.gpr[5]
+              << " r6: 0x" << ppu_result.registers.gpr[6]
+              << " r9: 0x" << ppu_result.registers.gpr[9]
+              << " r28: 0x" << ppu_result.registers.gpr[28]
+              << " r2: 0x" << ppu_result.registers.gpr[2]
+              << " r0: 0x" << ppu_result.registers.gpr[0]
+              << " r31: 0x" << ppu_result.registers.gpr[31]
+              << " cr: 0x" << ppu_result.registers.condition_register
               << std::dec << '\n';
+    std::cout << "  LV2 calls handled: " << lv2.trace().size() << '\n';
+    for (std::size_t index = 0; index < lv2.trace().size(); ++index) {
+        const auto& call = lv2.trace()[index];
+        std::cout << "    #" << call.ordinal << " "
+                  << vshift::hle::Ps3Lv2::Name(call.syscall)
+                  << " @0x" << std::hex << call.pc
+                  << " (0x" << call.syscall << ") -> 0x"
+                  << call.result << " args=0x" << call.arguments[0]
+                  << ",0x" << call.arguments[1] << ",0x"
+                  << call.arguments[2] << ",0x" << call.arguments[3]
+                  << std::dec << '\n';
+    }
+    std::cout << "  TTY output:" << '\n';
+    for (const auto& call : lv2.trace()) {
+        if (call.syscall != 403 || call.arguments[2] == 0 || call.arguments[2] > 0x1000) {
+            continue;
+        }
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(call.arguments[2]));
+        if (!memory.Read(call.arguments[1], bytes).ok()) continue;
+        std::cout << "    ";
+        for (const auto byte : bytes) {
+            if (byte >= 0x20 && byte < 0x7f) std::cout << static_cast<char>(byte);
+            else if (byte == '\n') std::cout << "\\n";
+            else if (byte == '\r') std::cout << "\\r";
+            else std::cout << "\\x" << std::hex << static_cast<unsigned>(byte) << std::dec;
+        }
+        std::cout << '\n';
+    }
     if (!ppu_result.error.empty()) {
         std::cout << "  PPU detail: " << ppu_result.error << '\n';
     }
-    std::cout << "  result: VSH image loaded; first PPU run attempted; LV2/RSX framebuffer is next\n";
+    std::cout << "  PPU tail:" << '\n';
+    const auto& ppu_trace = ppu.trace();
+    const auto ppu_trace_start = ppu_trace.size() > 12 ? ppu_trace.size() - 12 : 0;
+    for (std::size_t index = ppu_trace_start; index < ppu_trace.size(); ++index) {
+        std::cout << "    0x" << std::hex << ppu_trace[index].pc
+                  << ": 0x" << ppu_trace[index].instruction << std::dec << '\n';
+    }
+    std::cout << "  result: VSH image loaded; PPU/LV2 execution reached the next runtime boundary\n";
     return 0;
 }

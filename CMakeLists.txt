@@ -14,6 +14,7 @@ option(VSHIFT_BUILD_IOS "Build the iOS application target" OFF)
 add_library(vshift_core STATIC
     core/crypto/aes.cpp
     core/boot/ps4_boot.cpp
+    core/boot/ps3_runtime.cpp
     core/boot/synthetic_boot.cpp
     core/cpu/executable_memory.cpp
     core/cpu/arm64_jit.cpp
@@ -37,6 +38,7 @@ add_library(vshift_core STATIC
     core/firmware/ps3_package.cpp
     core/firmware/ps3_tar.cpp
     core/hle/kernel.cpp
+    core/hle/ps3_lv2.cpp
     core/video/framebuffer.cpp
 )
 
@@ -104,6 +106,11 @@ if(VSHIFT_BUILD_TESTS)
         tests/ppu_runtime_test.cpp
     )
     target_link_libraries(vshift_ppu_runtime_test PRIVATE vshift_core)
+
+    add_executable(vshift_ps3_lv2_test
+        tests/ps3_lv2_test.cpp
+    )
+    target_link_libraries(vshift_ps3_lv2_test PRIVATE vshift_core)
 
     add_executable(vshift_ps3_crypto_test
         tests/ps3_crypto_test.cpp
@@ -175,6 +182,7 @@ if(VSHIFT_BUILD_TESTS)
     add_test(NAME vshift_ps3_sce_test COMMAND vshift_ps3_sce_test)
     add_test(NAME vshift_ps3_self_test COMMAND vshift_ps3_self_test)
     add_test(NAME vshift_ppu_runtime_test COMMAND vshift_ppu_runtime_test)
+    add_test(NAME vshift_ps3_lv2_test COMMAND vshift_ps3_lv2_test)
     add_test(NAME vshift_ps3_crypto_test COMMAND vshift_ps3_crypto_test)
     add_test(NAME vshift_catalog_test COMMAND vshift_catalog_test)
     add_test(NAME vshift_elf_test COMMAND vshift_elf_test)
@@ -203,6 +211,11 @@ add_executable(vshift_ps3_vsh_bootstrap_inspect
     tools/ps3_vsh_bootstrap_inspect.cpp
 )
 target_link_libraries(vshift_ps3_vsh_bootstrap_inspect PRIVATE vshift_core)
+
+add_executable(vshift_ps3_runtime_probe
+    tools/ps3_runtime_probe.cpp
+)
+target_link_libraries(vshift_ps3_runtime_probe PRIVATE vshift_core)
 
 if(VSHIFT_BUILD_IOS)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -233,6 +246,7 @@ if(VSHIFT_BUILD_IOS)
         XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS
             "${CMAKE_CURRENT_SOURCE_DIR}/app/ios/VSHiftJITProbe.entitlements"
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+        XCODE_ATTRIBUTE_UIRequiresFullScreen "YES"
         XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "15.0"
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.vshift.VSHiftJITProbe"
     )

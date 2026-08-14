@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+#include "core/boot/ps3_runtime.h"
 #include "core/firmware/ps3_package.h"
 #include "core/firmware/ps3_pup.h"
 #include "core/firmware/ps3_tar.h"
@@ -216,7 +217,9 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
 
 @end
 
-@interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate>
+@interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate> {
+    vshift::boot::Ps3Runtime *_ps3Runtime;
+}
 @property(nonatomic, strong) UIScrollView *scrollView;
 @property(nonatomic, strong) UIStackView *contentStack;
 @property(nonatomic, strong) UILabel *statusLabel;
@@ -243,19 +246,20 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
 
 @implementation VSHiftJITViewController
 
+- (void)dealloc {
+    delete _ps3Runtime;
+    _ps3Runtime = nullptr;
+#if !__has_feature(objc_arc)
+    [super dealloc];
+#endif
+}
+
 static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     std::uint64_t value = 0;
     for (std::size_t index = 0; index < sizeof(value); ++index) {
         value = (value << 8) | bytes[index];
     }
     return value;
-}
-
-static std::uint32_t ReadU32BE(const std::uint8_t *bytes) {
-    return (static_cast<std::uint32_t>(bytes[0]) << 24) |
-           (static_cast<std::uint32_t>(bytes[1]) << 16) |
-           (static_cast<std::uint32_t>(bytes[2]) << 8) |
-           static_cast<std::uint32_t>(bytes[3]);
 }
 
 - (UIColor *)cardColor {
@@ -900,6 +904,8 @@ static std::uint32_t ReadU32BE(const std::uint8_t *bytes) {
     self.activePs3Machine[@"status"] = @"Starting";
     self.activePs3Machine[@"last_result"] = @"Starting PS3 runtime…";
     [self savePs3Machines];
+    delete _ps3Runtime;
+    _ps3Runtime = nullptr;
 
     VSHiftDisplayViewController *display = [[VSHiftDisplayViewController alloc] init];
     display.modalPresentationStyle = UIModalPresentationFullScreen;
@@ -974,12 +980,14 @@ static std::uint32_t ReadU32BE(const std::uint8_t *bytes) {
 }
 
 - (void)handlePS3RuntimePowerRequest {
+    if (_ps3Runtime != nullptr) _ps3Runtime->Stop();
     self.activePs3Machine[@"status"] = @"Stopped";
     self.activePs3Machine[@"last_result"] = @"Virtual console powered off.";
     [self savePs3Machines];
 }
 
 - (void)handlePS3RuntimePauseRequest:(BOOL)paused {
+    if (_ps3Runtime != nullptr) _ps3Runtime->Pause(paused);
     self.activePs3Machine[@"status"] = paused ? @"Paused" : @"Running";
     [self savePs3Machines];
 }
@@ -1155,47 +1163,40 @@ static std::uint32_t ReadU32BE(const std::uint8_t *bytes) {
         return;
     }
 
-    NSString *ppuReason = @"not started";
-    std::size_t ppuInstructions = 0;
-    std::uint64_t ppuPC = 0;
-    std::uint64_t ppuSyscall = 0;
-    std::array<std::uint8_t, 8> entryDescriptor{};
-    const auto descriptorRead = guestMemory.Read(
-        selfImage.image.entry_point, entryDescriptor);
-    const auto stackMapped = guestMemory.Map({
-        0x0c000000, 0x01000000,
-        vshift::memory::kPermissionRead | vshift::memory::kPermissionWrite});
-    if (descriptorRead.ok() && stackMapped.ok()) {
-        const auto codeAddress = ReadU32BE(entryDescriptor.data());
-        const auto tocAddress = ReadU32BE(entryDescriptor.data() + 4);
-        vshift::cpu::PpuRuntime ppu(guestMemory);
-        ppu.registers().pc = codeAddress;
-        ppu.registers().gpr[1] = 0x0cfff000;
-        ppu.registers().gpr[2] = tocAddress;
-        const auto ppuResult = ppu.Run(100000);
-        ppuInstructions = ppuResult.instructions;
-        ppuPC = ppuResult.registers.pc;
-        ppuSyscall = ppuResult.registers.gpr[11];
-        switch (ppuResult.reason) {
-        case vshift::cpu::PpuStopReason::Syscall:
-            ppuReason = @"LV2 syscall";
-            break;
-        case vshift::cpu::PpuStopReason::StepLimit:
-            ppuReason = @"step limit";
-            break;
-        case vshift::cpu::PpuStopReason::UnsupportedInstruction:
-            ppuReason = @"unsupported PPU instruction";
-            break;
-        case vshift::cpu::PpuStopReason::MemoryFault:
-            ppuReason = @"PPU memory fault";
-            break;
-        case vshift::cpu::PpuStopReason::Halted:
-            ppuReason = @"PPU halted";
-            break;
-        }
-    } else {
-        ppuReason = descriptorRead.ok() ? @"PPU stack map failed" : @"entry descriptor unreadable";
+    _ps3Runtime = new vshift::boot::Ps3Runtime();
+    const auto runtimeLoaded = _ps3Runtime->LoadFirmware(
+        std::span<const std::uint8_t>(pupBytes, pupData.length));
+    if (!runtimeLoaded.ok()) {
+        [self setPS3DisplayStatus:[NSString stringWithFormat:
+            @"PS3 runtime load failed:\n%s", runtimeLoaded.error.c_str()]];
+        self.activePs3Machine[@"status"] = @"Runtime load failed";
+        self.activePs3Machine[@"last_result"] = [NSString stringWithUTF8String:
+            runtimeLoaded.error.c_str()];
+        [self savePs3Machines];
+        return;
     }
+    const auto ppuResult = _ps3Runtime->Run(100000);
+    NSString *ppuReason = @"unknown";
+    switch (ppuResult.reason) {
+    case vshift::cpu::PpuStopReason::Syscall:
+        ppuReason = @"LV2 syscall";
+        break;
+    case vshift::cpu::PpuStopReason::StepLimit:
+        ppuReason = @"step limit";
+        break;
+    case vshift::cpu::PpuStopReason::UnsupportedInstruction:
+        ppuReason = @"unsupported PPU instruction";
+        break;
+    case vshift::cpu::PpuStopReason::MemoryFault:
+        ppuReason = @"PPU memory fault";
+        break;
+    case vshift::cpu::PpuStopReason::Halted:
+        ppuReason = @"PPU halted";
+        break;
+    }
+    const std::size_t ppuInstructions = ppuResult.instructions;
+    const std::uint64_t ppuPC = ppuResult.registers.pc;
+    const std::uint64_t ppuSyscall = ppuResult.registers.gpr[11];
 
     NSString *version = [self machineValue:self.activePs3Machine key:@"firmware_version" fallback:@"unknown"];
     NSError *manifestError = nil;
@@ -1221,7 +1222,7 @@ static std::uint32_t ReadU32BE(const std::uint8_t *bytes) {
             @"pc": @(ppuPC),
             @"syscall": @(ppuSyscall),
         },
-        @"boot_status": @"PS3 SELF metadata decrypted and PT_LOAD segments mapped; PPU/LV2/RSX execution pending",
+        @"boot_status": @"PS3 PPU/LV2 execution slice completed; RSX framebuffer pending",
     };
     const BOOL manifestSaved = [self writeManifest:manifest error:&manifestError];
     self.activePs3Machine[@"status"] = [NSString stringWithFormat:@"PPU %@", ppuReason];
@@ -1241,11 +1242,11 @@ static std::uint32_t ReadU32BE(const std::uint8_t *bytes) {
         static_cast<unsigned long>(ppuInstructions),
         static_cast<unsigned long long>(ppuPC),
         static_cast<unsigned long long>(ppuSyscall),
-        manifestSaved ? @"Next: PPU/LV2/RSX runtime and framebuffer."
+        manifestSaved ? @"Next: RSX command processing and framebuffer."
                       : [NSString stringWithFormat:@"Manifest save failed: %@", manifestError.localizedDescription ?: @"unknown error"]];
     [self savePs3Machines];
     [self setPS3DisplayStatus:[NSString stringWithFormat:
-        @"VSH image loaded\nPPU %@ · syscall/r11 0x%llx\nWaiting for LV2 HLE / RSX framebuffer…",
+        @"VSH runtime loaded\nPPU %@ · syscall/r11 0x%llx\nRSX framebuffer is next…",
         ppuReason, static_cast<unsigned long long>(ppuSyscall)]];
     if (self.displayViewController == nil) [self showPs3Detail];
 }

@@ -5,12 +5,15 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <vector>
 
 namespace vshift::cpu {
 
 struct PpuRegisters final {
     std::array<std::uint64_t, 32> gpr{};
+    std::array<std::uint64_t, 32> fpr{};
     std::uint64_t pc = 0;
     std::uint64_t lr = 0;
     std::uint64_t ctr = 0;
@@ -33,6 +36,15 @@ struct PpuRunResult final {
     std::string error;
 };
 
+struct PpuTraceEntry final {
+    std::uint64_t pc = 0;
+    std::uint32_t instruction = 0;
+};
+
+using PpuSyscallHandler =
+    std::function<bool(PpuRegisters&, std::string&)>;
+using PpuInstructionHook = std::function<void(PpuRegisters&)>;
+
 // Small big-endian PPU interpreter boundary. It is deliberately limited to
 // the integer/control-flow subset used by the first VSH startup attempt; HLE
 // LV2 syscalls and the RSX are separate runtime layers.
@@ -44,7 +56,17 @@ public:
     PpuRegisters& registers() noexcept { return registers_; }
     const PpuRegisters& registers() const noexcept { return registers_; }
 
-    PpuRunResult Run(std::size_t max_instructions);
+    void Reset() noexcept {
+        registers_ = {};
+        trace_.clear();
+        timebase_ = 0;
+    }
+
+    const std::vector<PpuTraceEntry>& trace() const noexcept { return trace_; }
+
+    PpuRunResult Run(std::size_t max_instructions,
+                     const PpuSyscallHandler& syscall_handler = {},
+                     const PpuInstructionHook& instruction_hook = {});
 
 private:
     enum class StepResult {
@@ -70,6 +92,8 @@ private:
 
     memory::GuestMemory& memory_;
     PpuRegisters registers_;
+    std::vector<PpuTraceEntry> trace_;
+    std::uint64_t timebase_ = 0;
 };
 
 } // namespace vshift::cpu

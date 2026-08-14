@@ -1,5 +1,7 @@
 #include "core/cpu/ppu_runtime.h"
 
+#include <bit>
+#include <cmath>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -67,7 +69,7 @@ bool PpuRuntime::ReadU32(std::uint64_t address,
     std::array<std::uint8_t, 4> bytes{};
     const auto result = memory_.Read(address, bytes);
     if (!result.ok()) {
-        error = result.error;
+        error = result.error + " at " + Hex(address);
         return false;
     }
     value = (static_cast<std::uint32_t>(bytes[0]) << 24) |
@@ -83,7 +85,7 @@ bool PpuRuntime::ReadU64(std::uint64_t address,
     std::array<std::uint8_t, 8> bytes{};
     const auto result = memory_.Read(address, bytes);
     if (!result.ok()) {
-        error = result.error;
+        error = result.error + " at " + Hex(address);
         return false;
     }
     value = 0;
@@ -100,7 +102,7 @@ bool PpuRuntime::WriteU32(std::uint64_t address,
         static_cast<std::uint8_t>(value >> 8),
         static_cast<std::uint8_t>(value)};
     const auto result = memory_.Write(address, bytes);
-    if (!result.ok()) error = result.error;
+    if (!result.ok()) error = result.error + " at " + Hex(address);
     return result.ok();
 }
 
@@ -113,7 +115,7 @@ bool PpuRuntime::WriteU64(std::uint64_t address,
             value >> ((bytes.size() - index - 1) * 8));
     }
     const auto result = memory_.Write(address, bytes);
-    if (!result.ok()) error = result.error;
+    if (!result.ok()) error = result.error + " at " + Hex(address);
     return result.ok();
 }
 
@@ -186,6 +188,14 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
         registers_.gpr[rt] = (ra == 0 ? 0 : registers_.gpr[ra]) +
                              (static_cast<std::int64_t>(immediate) << 16);
         break;
+    case 0x08: // subfic
+        registers_.gpr[rt] = static_cast<std::int64_t>(immediate) -
+                             (ra == 0 ? 0 : registers_.gpr[ra]);
+        break;
+    case 0x07: // mulli
+        registers_.gpr[rt] = (ra == 0 ? 0 : registers_.gpr[ra]) *
+                             static_cast<std::int64_t>(immediate);
+        break;
     case 0x0a: // cmpli
     case 0x0b: { // cmpi
         const auto bf = (instruction >> 23) & 7u;
@@ -197,8 +207,16 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
             field = value < right ? 0x8u : value > right ? 0x4u : 0x2u;
         } else {
             const auto right = static_cast<std::int16_t>(instruction & 0xffffu);
-            const auto value = static_cast<std::int64_t>(left);
-            field = value < right ? 0x8u : value > right ? 0x4u : 0x2u;
+            if ((instruction & (1u << 21)) == 0) {
+                // cmpwi compares the sign-extended low word.  lwz zero
+                // extends its result, so comparing the full 64-bit register
+                // would turn the usual 0xffffffff sentinel into +4294967295.
+                const auto value = static_cast<std::int32_t>(left);
+                field = value < right ? 0x8u : value > right ? 0x4u : 0x2u;
+            } else {
+                const auto value = static_cast<std::int64_t>(left);
+                field = value < right ? 0x8u : value > right ? 0x4u : 0x2u;
+            }
         }
         const auto shift = (7u - bf) * 4u;
         registers_.condition_register =
@@ -231,6 +249,9 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
             if (BranchCondition(bo, bi)) branch(registers_.lr & ~3ull, (instruction & 1u) != 0);
         } else if (xo == 0x210) {
             if (BranchCondition(bo, bi)) branch(registers_.ctr & ~3ull, (instruction & 1u) != 0);
+        } else if (xo == 0x096) { // isync
+            // Instruction synchronization has no observable effect in this
+            // interpreter because code and data share the same guest map.
         } else {
             error = "unsupported PPU branch-control opcode " + Hex(xo) + " at " + Hex(pc);
             return StepResult::UnsupportedInstruction;
@@ -286,9 +307,21 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
     }
     case 0x22: { // lbz
         std::array<std::uint8_t, 1> value{};
-        const auto result = memory_.Read(address(immediate), value);
-        if (!result.ok()) { error = result.error; return StepResult::MemoryFault; }
+        const auto effective = address(immediate);
+        const auto result = memory_.Read(effective, value);
+        if (!result.ok()) { error = result.error + " at " + Hex(effective); return StepResult::MemoryFault; }
         registers_.gpr[rt] = value[0];
+        break;
+    }
+    case 0x23: { // lbzu
+        const auto effective = address(immediate);
+        std::array<std::uint8_t, 1> value{};
+        if (ra == 0 || !memory_.Read(effective, value).ok()) {
+            error = "guest byte load-update failed at " + Hex(effective);
+            return StepResult::MemoryFault;
+        }
+        registers_.gpr[rt] = value[0];
+        registers_.gpr[ra] = effective;
         break;
     }
     case 0x24: { // stw
@@ -308,31 +341,133 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
     case 0x26: { // stb
         const std::array<std::uint8_t, 1> value{
             static_cast<std::uint8_t>(registers_.gpr[rt])};
-        const auto result = memory_.Write(address(immediate), value);
-        if (!result.ok()) { error = result.error; return StepResult::MemoryFault; }
+        const auto effective = address(immediate);
+        const auto result = memory_.Write(effective, value);
+        if (!result.ok()) { error = result.error + " at " + Hex(effective); return StepResult::MemoryFault; }
+        break;
+    }
+    case 0x27: { // stbu
+        const std::array<std::uint8_t, 1> value{
+            static_cast<std::uint8_t>(registers_.gpr[rt])};
+        const auto effective = address(immediate);
+        if (ra == 0 || !memory_.Write(effective, value).ok()) {
+            error = "guest byte store-update failed at " + Hex(effective);
+            return StepResult::MemoryFault;
+        }
+        registers_.gpr[ra] = effective;
         break;
     }
     case 0x28: { // lhz
         std::array<std::uint8_t, 2> value{};
-        const auto result = memory_.Read(address(immediate), value);
-        if (!result.ok()) { error = result.error; return StepResult::MemoryFault; }
+        const auto effective = address(immediate);
+        const auto result = memory_.Read(effective, value);
+        if (!result.ok()) { error = result.error + " at " + Hex(effective); return StepResult::MemoryFault; }
         registers_.gpr[rt] = (static_cast<std::uint64_t>(value[0]) << 8) | value[1];
+        break;
+    }
+    case 0x29: { // lhzu
+        const auto effective = address(immediate);
+        std::array<std::uint8_t, 2> value{};
+        if (ra == 0 || !memory_.Read(effective, value).ok()) {
+            error = "guest halfword load-update failed at " + Hex(effective);
+            return StepResult::MemoryFault;
+        }
+        registers_.gpr[rt] = (static_cast<std::uint64_t>(value[0]) << 8) | value[1];
+        registers_.gpr[ra] = effective;
         break;
     }
     case 0x2a: { // lha
         std::array<std::uint8_t, 2> value{};
-        const auto result = memory_.Read(address(immediate), value);
-        if (!result.ok()) { error = result.error; return StepResult::MemoryFault; }
+        const auto effective = address(immediate);
+        const auto result = memory_.Read(effective, value);
+        if (!result.ok()) { error = result.error + " at " + Hex(effective); return StepResult::MemoryFault; }
         const auto half = static_cast<std::int16_t>((value[0] << 8) | value[1]);
         registers_.gpr[rt] = static_cast<std::int64_t>(half);
+        break;
+    }
+    case 0x2b: { // lhau
+        const auto effective = address(immediate);
+        std::array<std::uint8_t, 2> value{};
+        if (ra == 0 || !memory_.Read(effective, value).ok()) {
+            error = "guest signed-halfword load-update failed at " + Hex(effective);
+            return StepResult::MemoryFault;
+        }
+        const auto half = static_cast<std::int16_t>((value[0] << 8) | value[1]);
+        registers_.gpr[rt] = static_cast<std::int64_t>(half);
+        registers_.gpr[ra] = effective;
         break;
     }
     case 0x2c: { // sth
         const std::array<std::uint8_t, 2> value{
             static_cast<std::uint8_t>(registers_.gpr[rt] >> 8),
             static_cast<std::uint8_t>(registers_.gpr[rt])};
-        const auto result = memory_.Write(address(immediate), value);
-        if (!result.ok()) { error = result.error; return StepResult::MemoryFault; }
+        const auto effective = address(immediate);
+        const auto result = memory_.Write(effective, value);
+        if (!result.ok()) { error = result.error + " at " + Hex(effective); return StepResult::MemoryFault; }
+        break;
+    }
+    case 0x2d: { // sthu
+        const std::array<std::uint8_t, 2> value{
+            static_cast<std::uint8_t>(registers_.gpr[rt] >> 8),
+            static_cast<std::uint8_t>(registers_.gpr[rt])};
+        const auto effective = address(immediate);
+        if (ra == 0 || !memory_.Write(effective, value).ok()) {
+            error = "guest halfword store-update failed at " + Hex(effective);
+            return StepResult::MemoryFault;
+        }
+        registers_.gpr[ra] = effective;
+        break;
+    }
+    case 0x30: { // lfs
+        std::uint32_t value = 0;
+        if (!ReadU32(address(immediate), value, error)) return StepResult::MemoryFault;
+        registers_.fpr[rt] = value;
+        break;
+    }
+    case 0x31: { // lfsu
+        const auto effective = address(immediate);
+        std::uint32_t value = 0;
+        if (ra == 0 || !ReadU32(effective, value, error)) return StepResult::MemoryFault;
+        registers_.fpr[rt] = value;
+        registers_.gpr[ra] = effective;
+        break;
+    }
+    case 0x32: { // lfd
+        std::uint64_t value = 0;
+        if (!ReadU64(address(immediate), value, error)) return StepResult::MemoryFault;
+        registers_.fpr[rt] = value;
+        break;
+    }
+    case 0x33: { // lfdu
+        const auto effective = address(immediate);
+        std::uint64_t value = 0;
+        if (ra == 0 || !ReadU64(effective, value, error)) return StepResult::MemoryFault;
+        registers_.fpr[rt] = value;
+        registers_.gpr[ra] = effective;
+        break;
+    }
+    case 0x34: { // stfs
+        if (!WriteU32(address(immediate), static_cast<std::uint32_t>(registers_.fpr[rt]), error)) {
+            return StepResult::MemoryFault;
+        }
+        break;
+    }
+    case 0x35: { // stfsu
+        const auto effective = address(immediate);
+        if (ra == 0 || !WriteU32(effective, static_cast<std::uint32_t>(registers_.fpr[rt]), error)) {
+            return StepResult::MemoryFault;
+        }
+        registers_.gpr[ra] = effective;
+        break;
+    }
+    case 0x36: { // stfd
+        if (!WriteU64(address(immediate), registers_.fpr[rt], error)) return StepResult::MemoryFault;
+        break;
+    }
+    case 0x37: { // stfdu
+        const auto effective = address(immediate);
+        if (ra == 0 || !WriteU64(effective, registers_.fpr[rt], error)) return StepResult::MemoryFault;
+        registers_.gpr[ra] = effective;
         break;
     }
     case 0x3a: { // ld/ldu/lwa (DS form)
@@ -376,14 +511,23 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
         } else if ((instruction & 0x8u) == 0) { // rldicr
             registers_.gpr[ra] = value & (~UINT64_C(0) << (mb ^ 63u));
         } else {
-            error = "unsupported PPU rotate-double form at " + Hex(pc);
-            return StepResult::UnsupportedInstruction;
+            // rldimi inserts the rotated source into the destination while
+            // preserving the bits outside the MB..63 mask.
+            const auto mask = MaskFromMbMe64(mb, 63);
+            registers_.gpr[ra] = (registers_.gpr[ra] & ~mask) | (value & mask);
         }
         break;
     }
     case 0x1f: {
         const auto xo = (instruction >> 1) & 0x3ffu;
         switch (xo) {
+        case 0x068: // neg
+            registers_.gpr[rt] = static_cast<std::uint64_t>(-
+                static_cast<std::int64_t>(registers_.gpr[ra]));
+            if ((instruction & 1u) != 0) {
+                SetCr0FromSigned(static_cast<std::int64_t>(registers_.gpr[rt]));
+            }
+            break;
         case 0x000: // cmpw/cmpd
         case 0x20: { // cmplw
             const auto bf = (instruction >> 23) & 7u;
@@ -407,6 +551,18 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
         case 0x013: // mfocrf
             registers_.gpr[rt] = registers_.condition_register;
             break;
+        case 0x090: { // mtcrf
+            const auto field_mask = (instruction >> 12) & 0xffu;
+            const auto source = static_cast<std::uint32_t>(registers_.gpr[rt]);
+            for (unsigned field = 0; field < 8; ++field) {
+                if ((field_mask & (1u << (7u - field))) == 0) continue;
+                const auto shift = (7u - field) * 4u;
+                registers_.condition_register =
+                    (registers_.condition_register & ~(0xfu << shift)) |
+                    (source & (0xfu << shift));
+            }
+            break;
+        }
         case 0x01a: { // cntlzw
             const auto value = static_cast<std::uint32_t>(registers_.gpr[rt]);
             unsigned count = 32;
@@ -433,6 +589,30 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
             if ((instruction & 1u) != 0) SetCr0FromLogical(count);
             break;
         }
+        case 0x39a: { // extsh (XO 922)
+            registers_.gpr[ra] = static_cast<std::int64_t>(
+                static_cast<std::int16_t>(registers_.gpr[rt]));
+            if ((instruction & 1u) != 0) {
+                SetCr0FromSigned(static_cast<std::int64_t>(registers_.gpr[ra]));
+            }
+            break;
+        }
+        case 0x3ba: { // extsb (XO 954)
+            registers_.gpr[ra] = static_cast<std::int64_t>(
+                static_cast<std::int8_t>(registers_.gpr[rt]));
+            if ((instruction & 1u) != 0) {
+                SetCr0FromSigned(static_cast<std::int64_t>(registers_.gpr[ra]));
+            }
+            break;
+        }
+        case 0x3da: { // extsw (XO 986)
+            registers_.gpr[ra] = static_cast<std::int64_t>(
+                static_cast<std::int32_t>(registers_.gpr[rt]));
+            if ((instruction & 1u) != 0) {
+                SetCr0FromSigned(static_cast<std::int64_t>(registers_.gpr[ra]));
+            }
+            break;
+        }
         case 0x018: { // slw
             const auto shift = registers_.gpr[rb] & 0x3fu;
             registers_.gpr[ra] = shift >= 32 ? 0 :
@@ -446,8 +626,49 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
             if ((instruction & 1u) != 0) SetCr0FromLogical(registers_.gpr[ra]);
             break;
         }
+        case 0x218: { // srw
+            const auto shift = registers_.gpr[rb] & 0x3fu;
+            registers_.gpr[ra] = shift >= 32 ? 0 :
+                static_cast<std::uint32_t>(registers_.gpr[rt]) >> shift;
+            if ((instruction & 1u) != 0) SetCr0FromLogical(registers_.gpr[ra]);
+            break;
+        }
+        case 0x21b: { // srd
+            const auto shift = registers_.gpr[rb] & 0x7fu;
+            registers_.gpr[ra] = shift >= 64 ? 0 : registers_.gpr[rt] >> shift;
+            if ((instruction & 1u) != 0) SetCr0FromLogical(registers_.gpr[ra]);
+            break;
+        }
+        case 0x338: { // srawi
+            const auto shift = (instruction >> 11) & 0x1fu;
+            const auto value = static_cast<std::int32_t>(registers_.gpr[rt]);
+            registers_.gpr[ra] = static_cast<std::int64_t>(value >> shift);
+            if ((instruction & 1u) != 0) SetCr0FromSigned(
+                static_cast<std::int64_t>(registers_.gpr[ra]));
+            break;
+        }
+        case 0x33b: { // sradi
+            const auto shift = ((instruction >> 11) & 0x1fu) |
+                               (((instruction >> 1) & 1u) << 5);
+            const auto value = static_cast<std::int64_t>(registers_.gpr[rt]);
+            registers_.gpr[ra] = shift == 0 ? value : value >> shift;
+            if ((instruction & 1u) != 0) SetCr0FromSigned(
+                static_cast<std::int64_t>(registers_.gpr[ra]));
+            break;
+        }
+        case 0x036: // dcbst
+        case 0x056: // dcbf
+        case 0x0f6: // dcbtst
+        case 0x116: // dcbt
+        case 0x196: // icbi
+        case 0x3f6: // dcbz
+            break;
         case 0x01c: // and
             registers_.gpr[ra] = registers_.gpr[rt] & registers_.gpr[rb];
+            if ((instruction & 1u) != 0) SetCr0FromLogical(registers_.gpr[ra]);
+            break;
+        case 0x07c: // nor
+            registers_.gpr[ra] = ~(registers_.gpr[rt] | registers_.gpr[rb]);
             if ((instruction & 1u) != 0) SetCr0FromLogical(registers_.gpr[ra]);
             break;
         case 0x13c: // xor
@@ -459,16 +680,154 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
             if ((instruction & 1u) != 0) SetCr0FromLogical(registers_.gpr[ra]);
             break;
         case 0x10a: // add
-            registers_.gpr[ra] = registers_.gpr[rt] + registers_.gpr[rb];
-            if ((instruction & 1u) != 0) SetCr0FromSigned(static_cast<std::int64_t>(registers_.gpr[ra]));
+            registers_.gpr[rt] = registers_.gpr[ra] + registers_.gpr[rb];
+            if ((instruction & 1u) != 0) SetCr0FromSigned(static_cast<std::int64_t>(registers_.gpr[rt]));
             break;
         case 0x028: // subf
-            registers_.gpr[ra] = registers_.gpr[rb] - registers_.gpr[rt];
-            if ((instruction & 1u) != 0) SetCr0FromSigned(static_cast<std::int64_t>(registers_.gpr[ra]));
+            registers_.gpr[rt] = registers_.gpr[rb] - registers_.gpr[ra];
+            if ((instruction & 1u) != 0) SetCr0FromSigned(static_cast<std::int64_t>(registers_.gpr[rt]));
             break;
+        case 0x1c9: // divdu
+            if (registers_.gpr[rb] == 0) {
+                error = "PPU unsigned divide by zero at " + Hex(pc);
+                return StepResult::Halted;
+            }
+            registers_.gpr[rt] = registers_.gpr[ra] / registers_.gpr[rb];
+            if ((instruction & 1u) != 0) SetCr0FromLogical(registers_.gpr[rt]);
+            break;
+        case 0x009: { // mulhdu
+            const auto product = static_cast<unsigned __int128>(
+                registers_.gpr[ra]) * registers_.gpr[rb];
+            registers_.gpr[rt] = static_cast<std::uint64_t>(product >> 64);
+            if ((instruction & 1u) != 0) SetCr0FromLogical(registers_.gpr[rt]);
+            break;
+        }
+        case 0x0e9: // mulld
+            registers_.gpr[rt] = registers_.gpr[ra] * registers_.gpr[rb];
+            if ((instruction & 1u) != 0) SetCr0FromLogical(registers_.gpr[rt]);
+            break;
+        case 0x0eb: { // mullw
+            const auto left = static_cast<std::int32_t>(registers_.gpr[ra]);
+            const auto right = static_cast<std::int32_t>(registers_.gpr[rb]);
+            registers_.gpr[rt] = static_cast<std::int64_t>(
+                static_cast<std::int32_t>(left * right));
+            if ((instruction & 1u) != 0) SetCr0FromSigned(static_cast<std::int64_t>(registers_.gpr[rt]));
+            break;
+        }
+        case 0x1cb: // divwu
+            if (static_cast<std::uint32_t>(registers_.gpr[rb]) == 0) {
+                error = "PPU unsigned word divide by zero at " + Hex(pc);
+                return StepResult::Halted;
+            }
+            registers_.gpr[rt] = static_cast<std::uint32_t>(registers_.gpr[ra]) /
+                static_cast<std::uint32_t>(registers_.gpr[rb]);
+            if ((instruction & 1u) != 0) SetCr0FromLogical(registers_.gpr[rt]);
+            break;
+        case 0x014: { // lwarx (reservation is not contended in the first runtime)
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            std::uint32_t value = 0;
+            if (!ReadU32(effective, value, error)) return StepResult::MemoryFault;
+            registers_.gpr[rt] = value;
+            break;
+        }
+        case 0x017: { // lwzx
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            std::uint32_t value = 0;
+            if (!ReadU32(effective, value, error)) return StepResult::MemoryFault;
+            registers_.gpr[rt] = value;
+            break;
+        }
+        case 0x054: { // ldarx (reservation is not contended in the first runtime)
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            std::uint64_t value = 0;
+            if (!ReadU64(effective, value, error)) return StepResult::MemoryFault;
+            registers_.gpr[rt] = value;
+            break;
+        }
+        case 0x096: { // stwcx. (the single PPU runtime always owns the reservation)
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            if (!WriteU32(effective, static_cast<std::uint32_t>(registers_.gpr[rt]), error)) {
+                return StepResult::MemoryFault;
+            }
+            // A successful conditional store reports CR0.EQ. Setting the
+            // logical result to one would report GT and make the usual
+            // following bne retry a store that already succeeded.
+            SetCr0FromLogical(0);
+            break;
+        }
+        case 0x0d6: { // stdcx.
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            if (!WriteU64(effective, registers_.gpr[rt], error)) return StepResult::MemoryFault;
+            // A successful conditional store sets CR0.EQ; bne then falls
+            // through to the post-store path.
+            SetCr0FromLogical(0);
+            break;
+        }
+        case 0x095: { // stdx
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            if (!WriteU64(effective, registers_.gpr[rt], error)) return StepResult::MemoryFault;
+            break;
+        }
+        case 0x057: { // lbzx
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            std::array<std::uint8_t, 1> value{};
+            const auto result = memory_.Read(effective, value);
+            if (!result.ok()) { error = result.error + " at " + Hex(effective); return StepResult::MemoryFault; }
+            registers_.gpr[rt] = value[0];
+            break;
+        }
+        case 0x097: { // stwx
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            if (!WriteU32(effective, static_cast<std::uint32_t>(registers_.gpr[rt]), error)) {
+                return StepResult::MemoryFault;
+            }
+            break;
+        }
+        case 0x117: { // lhzx
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            std::array<std::uint8_t, 2> value{};
+            const auto result = memory_.Read(effective, value);
+            if (!result.ok()) { error = result.error + " at " + Hex(effective); return StepResult::MemoryFault; }
+            registers_.gpr[rt] = (static_cast<std::uint64_t>(value[0]) << 8) | value[1];
+            break;
+        }
+        case 0x157: { // lhax
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            std::array<std::uint8_t, 2> value{};
+            const auto result = memory_.Read(effective, value);
+            if (!result.ok()) { error = result.error + " at " + Hex(effective); return StepResult::MemoryFault; }
+            const auto half = static_cast<std::int16_t>((value[0] << 8) | value[1]);
+            registers_.gpr[rt] = static_cast<std::int64_t>(half);
+            break;
+        }
+        case 0x197: { // sthx
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            const std::array<std::uint8_t, 2> value{
+                static_cast<std::uint8_t>(registers_.gpr[rt] >> 8),
+                static_cast<std::uint8_t>(registers_.gpr[rt])};
+            const auto result = memory_.Write(effective, value);
+            if (!result.ok()) { error = result.error + " at " + Hex(effective); return StepResult::MemoryFault; }
+            break;
+        }
+        case 0x0d7: { // stbx
+            const auto effective = (ra == 0 ? 0ull : registers_.gpr[ra]) + registers_.gpr[rb];
+            const std::array<std::uint8_t, 1> value{
+                static_cast<std::uint8_t>(registers_.gpr[rt])};
+            const auto result = memory_.Write(effective, value);
+            if (!result.ok()) { error = result.error + " at " + Hex(effective); return StepResult::MemoryFault; }
+            break;
+        }
+        case 0x173: { // mftb/mftbl/mftbu
+            const auto spr = ((instruction >> 16) & 0x1fu) |
+                             (((instruction >> 11) & 0x1fu) << 5);
+            if (spr == 268) registers_.gpr[rt] = timebase_ & UINT64_C(0xffffffff);
+            else if (spr == 269) registers_.gpr[rt] = timebase_ >> 32;
+            else registers_.gpr[rt] = 0;
+            break;
+        }
         case 0x150: // isel
-            registers_.gpr[ra] = ((registers_.condition_register >> (31u - (instruction >> 6 & 0x1f))) & 1u)
-                ? registers_.gpr[rt] : registers_.gpr[rb];
+            registers_.gpr[rt] = ((registers_.condition_register >> (31u - (instruction >> 6 & 0x1f))) & 1u)
+                ? registers_.gpr[ra] : registers_.gpr[rb];
             break;
         case 0x153: { // mfspr
             const auto spr = ((instruction >> 16) & 0x1fu) |
@@ -488,6 +847,7 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
         case 0x004: // tw
             return StepResult::Halted;
         case 0x016: // sync/isync variants are harmless at this stage
+        case 0x256: // sync
         case 0x356:
         case 0x3b6:
             break;
@@ -501,6 +861,52 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
         }
         break;
     }
+    case 0x3b: {
+        const auto xo = (instruction >> 1) & 0x3ffu;
+        switch (xo) {
+        case 0x012: { // fdivs
+            const auto left = static_cast<float>(
+                std::bit_cast<double>(registers_.fpr[ra]));
+            const auto right = static_cast<float>(
+                std::bit_cast<double>(registers_.fpr[rb]));
+            const auto result = left / right;
+            registers_.fpr[rt] = std::bit_cast<std::uint64_t>(
+                static_cast<double>(result));
+            break;
+        }
+        default:
+            error = "unsupported PPU single-precision opcode " + Hex(xo) +
+                    " at " + Hex(pc);
+            return StepResult::UnsupportedInstruction;
+        }
+        break;
+    }
+    case 0x3f: {
+        const auto xo = (instruction >> 1) & 0x3ffu;
+        switch (xo) {
+        case 0x048: // fmr
+            registers_.fpr[rt] = registers_.fpr[rb];
+            break;
+        case 0x34e: { // fcfid
+            const auto integer = static_cast<std::int64_t>(registers_.fpr[rb]);
+            registers_.fpr[rt] = std::bit_cast<std::uint64_t>(
+                static_cast<double>(integer));
+            break;
+        }
+        case 0x00c: { // frsp
+            const auto source = std::bit_cast<double>(registers_.fpr[rb]);
+            const auto rounded = static_cast<float>(source);
+            registers_.fpr[rt] = std::bit_cast<std::uint64_t>(
+                static_cast<double>(rounded));
+            break;
+        }
+        default:
+            error = "unsupported PPU floating-point opcode " + Hex(xo) +
+                    " at " + Hex(pc);
+            return StepResult::UnsupportedInstruction;
+        }
+        break;
+    }
     default:
         error = "unsupported PPU primary opcode " + Hex(primary) + " at " + Hex(pc);
         return StepResult::UnsupportedInstruction;
@@ -508,14 +914,33 @@ PpuRuntime::StepResult PpuRuntime::Step(std::uint32_t& instruction,
     return StepResult::Continue;
 }
 
-PpuRunResult PpuRuntime::Run(std::size_t max_instructions) {
+PpuRunResult PpuRuntime::Run(std::size_t max_instructions,
+                             const PpuSyscallHandler& syscall_handler,
+                             const PpuInstructionHook& instruction_hook) {
     PpuRunResult result;
+    trace_.clear();
     for (; result.instructions < max_instructions; ++result.instructions) {
+        if (instruction_hook) instruction_hook(registers_);
+        timebase_ += 100;
+        const auto step_pc = registers_.pc;
         std::uint32_t instruction = 0;
         std::string error;
         const auto step = Step(instruction, error);
+        trace_.push_back({step_pc, instruction});
+        if (trace_.size() > 128) trace_.erase(trace_.begin());
         result.instruction = instruction;
         if (step == StepResult::Continue) continue;
+        if (step == StepResult::Syscall && syscall_handler) {
+            if (syscall_handler(registers_, error)) {
+                continue;
+            }
+            if (error.empty()) {
+                error = "unhandled PS3 LV2 syscall 0x";
+                std::ostringstream stream;
+                stream << std::hex << registers_.gpr[11];
+                error += stream.str();
+            }
+        }
         result.instructions++;
         result.registers = registers_;
         result.error = std::move(error);
