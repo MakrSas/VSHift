@@ -218,6 +218,7 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         foreach(RPCS3_IOS_FFMPEG_SOURCE IN ITEMS
             "../util/media_utils.cpp"
             "Cell/Modules/cellAtracXdec.cpp"
+            "Cell/Modules/cellDmuxPamf.cpp"
             "Cell/Modules/cellRec.cpp"
             "Cell/Modules/cellSail.cpp"
             "Cell/Modules/cellSailRec.cpp"
@@ -533,6 +534,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(rpcs3_emu PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/app/ios/rpcs3_ios_input_bridge.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/ps3/rpcs3_ios_media_stub.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/ps3/rpcs3_ios_dmux_stub.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/ps3/rpcs3_ios_rsx_utils_stub.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Input/product_info.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Input/ps_move_config.cpp")
