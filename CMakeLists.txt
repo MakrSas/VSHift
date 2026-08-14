@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(VSHift VERSION 0.1.0 LANGUAGES CXX)
 
+find_package(ZLIB REQUIRED)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -10,6 +12,7 @@ option(VSHIFT_BUILD_TESTS "Build host-side tests" ON)
 option(VSHIFT_BUILD_IOS "Build the iOS application target" OFF)
 
 add_library(vshift_core STATIC
+    core/crypto/aes.cpp
     core/boot/ps4_boot.cpp
     core/boot/synthetic_boot.cpp
     core/cpu/executable_memory.cpp
@@ -29,6 +32,8 @@ add_library(vshift_core STATIC
     core/firmware/slb2.cpp
     core/firmware/pup.cpp
     core/firmware/ps3_pup.cpp
+    core/firmware/ps3_package.cpp
+    core/firmware/ps3_tar.cpp
     core/hle/kernel.cpp
     core/video/framebuffer.cpp
 )
@@ -36,6 +41,8 @@ add_library(vshift_core STATIC
 target_include_directories(vshift_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+target_link_libraries(vshift_core PUBLIC ZLIB::ZLIB)
 
 target_compile_features(vshift_core PUBLIC cxx_std_20)
 
@@ -85,6 +92,11 @@ if(VSHIFT_BUILD_TESTS)
         tests/ps3_sce_test.cpp
     )
     target_link_libraries(vshift_ps3_sce_test PRIVATE vshift_core)
+
+    add_executable(vshift_ps3_crypto_test
+        tests/ps3_crypto_test.cpp
+    )
+    target_link_libraries(vshift_ps3_crypto_test PRIVATE vshift_core)
 
     add_executable(vshift_catalog_test
         tests/catalog_test.cpp
@@ -149,6 +161,7 @@ if(VSHIFT_BUILD_TESTS)
     add_test(NAME vshift_pup_test COMMAND vshift_pup_test)
     add_test(NAME vshift_ps3_pup_test COMMAND vshift_ps3_pup_test)
     add_test(NAME vshift_ps3_sce_test COMMAND vshift_ps3_sce_test)
+    add_test(NAME vshift_ps3_crypto_test COMMAND vshift_ps3_crypto_test)
     add_test(NAME vshift_catalog_test COMMAND vshift_catalog_test)
     add_test(NAME vshift_elf_test COMMAND vshift_elf_test)
     add_test(NAME vshift_guest_memory_test COMMAND vshift_guest_memory_test)
@@ -171,6 +184,11 @@ add_executable(vshift_ps3_firmware_inspect
     tools/ps3_firmware_inspect.cpp
 )
 target_link_libraries(vshift_ps3_firmware_inspect PRIVATE vshift_core)
+
+add_executable(vshift_ps3_vsh_bootstrap_inspect
+    tools/ps3_vsh_bootstrap_inspect.cpp
+)
+target_link_libraries(vshift_ps3_vsh_bootstrap_inspect PRIVATE vshift_core)
 
 if(VSHIFT_BUILD_IOS)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")

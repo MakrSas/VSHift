@@ -13,6 +13,7 @@ added before merging it.
 | FEX | https://github.com/FEX-Emu/FEX | MIT | Research only; IR and register-allocation concepts |
 | Box64 | https://github.com/ptitSeb/box64 | MIT | Research only; ARM64 dynarec/block-cache concepts |
 | MoltenVK | https://github.com/KhronosGroup/MoltenVK | Apache-2.0 | Planned optional renderer dependency; not vendored |
+| RPCS3 | https://github.com/RPCS3/rpcs3 | GPL-2.0 | Adapted PS3 SCE package key constants and metadata/section layout from revision `12b1efc26601b20f85f4d040582e7473388bb553`; no RPCS3 runtime, Qt, Android, audio, or RSX sources are vendored |
 
 The repository's existing top-level `LICENSE` is GPL-2.0. No Sony or
 PlayStation proprietary material is included.

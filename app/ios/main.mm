@@ -6,7 +6,9 @@
 #include "core/cpu/arm64_jit.h"
 #include "core/firmware/catalog.h"
 #include "core/firmware/pup.h"
+#include "core/firmware/ps3_package.h"
 #include "core/firmware/ps3_pup.h"
+#include "core/firmware/ps3_tar.h"
 #include "core/firmware/slb2.h"
 #include "core/cpu/x86_decoder.h"
 #include "core/loader/elf_loader.h"
@@ -21,6 +23,7 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 @interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate>
@@ -28,8 +31,10 @@
 @property(nonatomic, strong) UILabel *guestFrameStateLabel;
 @property(nonatomic, strong) UIImageView *guestFrameView;
 @property(nonatomic, strong) UIButton *exportManifestButton;
+@property(nonatomic, strong) UIButton *ps3BootButton;
 @property(nonatomic, strong) NSURL *manifestURL;
 @property(nonatomic, strong) NSURL *firmwareRootURL;
+@property(nonatomic, strong) NSURL *ps3FirmwareURL;
 @property(nonatomic, assign) BOOL pickingDecryptedFirmware;
 @property(nonatomic, assign) BOOL pickingPs3Firmware;
 @property(nonatomic, assign) BOOL pickingFirmwareRoot;
@@ -196,6 +201,19 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
                                   action:@selector(exportManifest)
                         forControlEvents:UIControlEventTouchUpInside];
 
+    UIButtonConfiguration *ps3BootConfiguration =
+        [UIButtonConfiguration filledButtonConfiguration];
+    ps3BootConfiguration.title = @"Prepare PS3 VSH bootstrap";
+    ps3BootConfiguration.image = [UIImage systemImageNamed:@"play.tv"];
+    ps3BootConfiguration.imagePadding = 8.0;
+    ps3BootConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    self.ps3BootButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.ps3BootButton.configuration = ps3BootConfiguration;
+    self.ps3BootButton.enabled = NO;
+    [self.ps3BootButton addTarget:self
+                           action:@selector(preparePs3VshBootstrap)
+                 forControlEvents:UIControlEventTouchUpInside];
+
     UIView *firmwareCard = [[UIView alloc] init];
     firmwareCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
     firmwareCard.layer.cornerRadius = 24.0;
@@ -268,7 +286,7 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     bootCard.layer.cornerRadius = 24.0;
     bootCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
     UIStackView *bootStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        bootHeader, realBootButton, selfProbeButton,
+        bootHeader, self.ps3BootButton, realBootButton, selfProbeButton,
         syntheticJitButton, syntheticJitLessButton
     ]];
     bootStack.axis = UILayoutConstraintAxisVertical;
@@ -866,6 +884,191 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     self.statusLabel.text = summary;
 }
 
+- (void)preparePs3VshBootstrap {
+    NSURL *url = self.ps3FirmwareURL;
+    if (url == nil) {
+        self.statusLabel.text =
+            @"Import PS3UPDAT.PUP first. The VSH bootstrap is not ready.";
+        return;
+    }
+
+    const BOOL accessed = [url startAccessingSecurityScopedResource];
+    NSDictionary *attributes = [[NSFileManager defaultManager]
+        attributesOfItemAtPath:url.path error:nil];
+    const auto fileSize = [attributes[NSFileSize] unsignedLongLongValue];
+    NSFileHandle *handle =
+        [NSFileHandle fileHandleForReadingFromURL:url error:nil];
+    if (handle == nil || fileSize < vshift::firmware::kPs3PupHeaderSize) {
+        if (handle != nil) [handle closeFile];
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        self.statusLabel.text = @"Could not open PS3UPDAT.PUP for bootstrap.";
+        return;
+    }
+
+    NSData *fixedHeaderData =
+        [handle readDataOfLength:vshift::firmware::kPs3PupHeaderSize];
+    if (fixedHeaderData.length < vshift::firmware::kPs3PupHeaderSize) {
+        [handle closeFile];
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        self.statusLabel.text = @"Could not read the PS3 PUP header.";
+        return;
+    }
+    const auto *fixedHeaderBytes =
+        static_cast<const std::uint8_t *>(fixedHeaderData.bytes);
+    const auto headerLength = ReadU64BE(fixedHeaderBytes + 0x20);
+    if (headerLength < vshift::firmware::kPs3PupHeaderSize ||
+        headerLength > 16ull * 1024ull * 1024ull ||
+        headerLength > fileSize ||
+        headerLength > std::numeric_limits<NSUInteger>::max()) {
+        [handle closeFile];
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        self.statusLabel.text = @"PS3 PUP header size is invalid.";
+        return;
+    }
+
+    [handle seekToFileOffset:0];
+    NSData *headerData =
+        [handle readDataOfLength:static_cast<NSUInteger>(headerLength)];
+    const auto *headerBytes =
+        static_cast<const std::uint8_t *>(headerData.bytes);
+    const auto parsed = vshift::firmware::ParsePs3PupHeaders(
+        std::span<const std::uint8_t>(headerBytes, headerData.length),
+        fileSize);
+    if (!parsed.ok()) {
+        [handle closeFile];
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"PS3 PUP parse failed:\n%s", parsed.error.c_str()];
+        return;
+    }
+
+    const auto updateEntry = std::find_if(
+        parsed.entries.begin(), parsed.entries.end(), [](const auto& entry) {
+            return entry.entry_id == 0x300;
+        });
+    if (updateEntry == parsed.entries.end() ||
+        updateEntry->data_length > std::numeric_limits<NSUInteger>::max()) {
+        [handle closeFile];
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        self.statusLabel.text = @"PS3 PUP has no readable update TAR.";
+        return;
+    }
+
+    [handle seekToFileOffset:updateEntry->data_offset];
+    NSData *updateTarData = [handle readDataOfLength:
+        static_cast<NSUInteger>(updateEntry->data_length)];
+    if (updateTarData.length != static_cast<NSUInteger>(updateEntry->data_length)) {
+        [handle closeFile];
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        self.statusLabel.text = @"Could not read the PS3 update TAR.";
+        return;
+    }
+    const auto *updateTarBytes =
+        static_cast<const std::uint8_t *>(updateTarData.bytes);
+    const auto updateTar = vshift::firmware::ParsePs3Tar(
+        std::span<const std::uint8_t>(updateTarBytes, updateTarData.length));
+    if (!updateTar.ok()) {
+        [handle closeFile];
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"PS3 update TAR parse failed:\n%s", updateTar.error.c_str()];
+        return;
+    }
+
+    const auto packageEntry = std::find_if(
+        updateTar.entries.begin(), updateTar.entries.end(), [](const auto& entry) {
+            return entry.regular_file &&
+                   entry.name.rfind("dev_flash_012", 0) == 0;
+        });
+    if (packageEntry == updateTar.entries.end() ||
+        packageEntry->data_offset > updateTarData.length ||
+        packageEntry->data_length > updateTarData.length -
+                                      packageEntry->data_offset) {
+        [handle closeFile];
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        self.statusLabel.text = @"dev_flash_012 package is missing or invalid.";
+        return;
+    }
+
+    const auto packageBegin = static_cast<std::size_t>(
+        packageEntry->data_offset);
+    const auto packageLength = static_cast<std::size_t>(
+        packageEntry->data_length);
+    const auto package = vshift::firmware::DecryptPs3ScePackage(
+        std::span<const std::uint8_t>(updateTarBytes + packageBegin,
+                                      packageLength));
+    if (!package.ok()) {
+        [handle closeFile];
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"dev_flash_012 decrypt failed:\n%s", package.error.c_str()];
+        return;
+    }
+
+    vshift::firmware::Ps3TarParseResult vshTar;
+    const vshift::firmware::Ps3TarEntry *vshEntry = nullptr;
+    for (const auto &section : package.sections) {
+        auto candidate = vshift::firmware::ParsePs3Tar(section.bytes);
+        if (!candidate.ok()) continue;
+        const auto found = std::find_if(
+            candidate.entries.begin(), candidate.entries.end(), [](const auto& entry) {
+                return entry.regular_file &&
+                       entry.name == "dev_flash/vsh/module/vsh.self";
+            });
+        if (found != candidate.entries.end()) {
+            vshTar = std::move(candidate);
+            vshEntry = &*std::find_if(
+                vshTar.entries.begin(), vshTar.entries.end(), [](const auto& entry) {
+                    return entry.regular_file &&
+                           entry.name == "dev_flash/vsh/module/vsh.self";
+                });
+            break;
+        }
+    }
+    [handle closeFile];
+    if (accessed) [url stopAccessingSecurityScopedResource];
+    if (vshEntry == nullptr) {
+        self.statusLabel.text =
+            @"dev_flash_012 decrypted, but vsh.self was not found.";
+        return;
+    }
+
+    self.ps3FirmwareURL = url;
+    self.ps3BootButton.enabled = YES;
+    self.guestFrameView.image = nil;
+    self.guestFrameView.hidden = YES;
+    self.guestFrameStateLabel.text =
+        @"PS3 VSH package prepared\nPPU/LV2/RSX framebuffer execution pending";
+    NSError *manifestError = nil;
+    NSDictionary *manifest = @{
+        @"schema_version": @4,
+        @"source_file_name": url.lastPathComponent ?: @"PS3UPDAT.PUP",
+        @"source_kind": @"user-provided PS3 PUP",
+        @"boot_profile": @"PS3 VSH bootstrap",
+        @"firmware_version": @"4.93",
+        @"package": [NSString stringWithUTF8String:packageEntry->name.c_str()],
+        @"decrypted_section_count": @(package.sections.size()),
+        @"vsh_self": @{
+            @"path": @"dev_flash/vsh/module/vsh.self",
+            @"size": @(vshEntry->data_length),
+        },
+        @"boot_status":
+            @"dev_flash package decrypted; PPU/LV2/RSX execution pending",
+    };
+    const BOOL manifestSaved = [self writeManifest:manifest
+                                             error:&manifestError];
+    self.statusLabel.text = [NSString stringWithFormat:
+        @"PS3 VSH BOOTSTRAP READY\nFirmware: 4.93\nPackage: %@\n"
+         @"Decrypted sections: %lu\nvsh.self: %llu bytes\n%@",
+        [NSString stringWithUTF8String:packageEntry->name.c_str()],
+        static_cast<unsigned long>(package.sections.size()),
+        static_cast<unsigned long long>(vshEntry->data_length),
+        manifestSaved
+            ? @"Next: PPU/LV2/RSX runtime and framebuffer."
+            : [NSString stringWithFormat:@"Manifest save failed: %@",
+                manifestError.localizedDescription ?: @"unknown error"]];
+}
+
 - (void)inspectPs3FirmwareAtURL:(NSURL *)url {
     const BOOL accessed = [url startAccessingSecurityScopedResource];
     NSError *attributesError = nil;
@@ -1003,6 +1206,8 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     if (accessed) {
         [url stopAccessingSecurityScopedResource];
     }
+    self.ps3FirmwareURL = url;
+    self.ps3BootButton.enabled = YES;
 
     NSDictionary *manifest = @{
         @"schema_version": @3,
