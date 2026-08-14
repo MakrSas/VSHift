@@ -77,6 +77,18 @@ set(RPCS3_THREAD_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/Utilities/Thread.cpp")
 set(RPCS3_SYSTEM_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/System.cpp")
+set(RPCS3_SPUTHREAD_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/SPUThread.cpp")
+set(RPCS3_JITLLVM_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/Utilities/JITLLVM.cpp")
+set(RPCS3_JITASM_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/Utilities/JITASM.cpp")
+set(RPCS3_PPUTHREAD_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/PPUThread.cpp")
+set(RPCS3_SPULLVM_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/SPULLVMRecompiler.cpp")
+set(RPCS3_SPUCOMMON_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -192,6 +204,78 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             RPCS3_SYSTEM_TEXT "${RPCS3_SYSTEM_TEXT}")
         file(WRITE "${RPCS3_SYSTEM_CPP}" "${RPCS3_SYSTEM_TEXT}")
     endif()
+
+    file(READ "${RPCS3_SPUTHREAD_CPP}" RPCS3_SPUTHREAD_TEXT)
+    if(NOT RPCS3_SPUTHREAD_TEXT MATCHES "VSHIFT_RPCS3_IOS.*pthread_jit_write_protect_np\\(true\\)")
+        string(REPLACE
+            "#ifdef __APPLE__\n\tpthread_jit_write_protect_np(true)"
+            "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\tpthread_jit_write_protect_np(true)"
+            RPCS3_SPUTHREAD_TEXT "${RPCS3_SPUTHREAD_TEXT}")
+        file(WRITE "${RPCS3_SPUTHREAD_CPP}" "${RPCS3_SPUTHREAD_TEXT}")
+    endif()
+
+    file(READ "${RPCS3_JITLLVM_CPP}" RPCS3_JITLLVM_TEXT)
+    string(REPLACE
+        "#if defined(__APPLE__)\n\t\t\tpthread_jit_write_protect_np(false)"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\t\t\tpthread_jit_write_protect_np(false)"
+        RPCS3_JITLLVM_TEXT "${RPCS3_JITLLVM_TEXT}")
+    string(REPLACE
+        "#if defined(__APPLE__)\n\t\t\tpthread_jit_write_protect_np(true)"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\t\t\tpthread_jit_write_protect_np(true)"
+        RPCS3_JITLLVM_TEXT "${RPCS3_JITLLVM_TEXT}")
+    file(WRITE "${RPCS3_JITLLVM_CPP}" "${RPCS3_JITLLVM_TEXT}")
+
+    file(READ "${RPCS3_JITASM_CPP}" RPCS3_JITASM_TEXT)
+    string(REPLACE
+        "#ifdef __APPLE__\n\tpthread_jit_write_protect_np(false)"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\tpthread_jit_write_protect_np(false)"
+        RPCS3_JITASM_TEXT "${RPCS3_JITASM_TEXT}")
+    string(REPLACE
+        "#ifdef __APPLE__\n\tpthread_jit_write_protect_np(true)"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\tpthread_jit_write_protect_np(true)"
+        RPCS3_JITASM_TEXT "${RPCS3_JITASM_TEXT}")
+    file(WRITE "${RPCS3_JITASM_CPP}" "${RPCS3_JITASM_TEXT}")
+
+    file(READ "${RPCS3_PPUTHREAD_CPP}" RPCS3_PPUTHREAD_TEXT)
+    string(REPLACE
+        "#ifdef __APPLE__\n\t// Ensure correct state before executing JIT code"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\t// Ensure correct state before executing JIT code"
+        RPCS3_PPUTHREAD_TEXT "${RPCS3_PPUTHREAD_TEXT}")
+    string(REPLACE
+        "#ifdef __APPLE__\n\t// Restore write-protection state (modified by build_function_asm)"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\t// Restore write-protection state (modified by build_function_asm)"
+        RPCS3_PPUTHREAD_TEXT "${RPCS3_PPUTHREAD_TEXT}")
+    string(REPLACE
+        "#ifdef __APPLE__\n\tpthread_jit_write_protect_np(false)"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\tpthread_jit_write_protect_np(false)"
+        RPCS3_PPUTHREAD_TEXT "${RPCS3_PPUTHREAD_TEXT}")
+    string(REPLACE
+        "#ifdef __APPLE__\n\t\tnamed_thread sym_worker"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\t\tnamed_thread sym_worker"
+        RPCS3_PPUTHREAD_TEXT "${RPCS3_PPUTHREAD_TEXT}")
+    string(REPLACE
+        "#ifdef __APPLE__\n\t\t\t// Virtual memory mapped by MAP_JIT"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\n\t\t\t// Virtual memory mapped by MAP_JIT"
+        RPCS3_PPUTHREAD_TEXT "${RPCS3_PPUTHREAD_TEXT}")
+    string(REPLACE
+        "#ifndef __APPLE__\n\t\t}"
+        "#if !defined(__APPLE__) || defined(VSHIFT_RPCS3_IOS)\n\t\t}"
+        RPCS3_PPUTHREAD_TEXT "${RPCS3_PPUTHREAD_TEXT}")
+    file(WRITE "${RPCS3_PPUTHREAD_CPP}" "${RPCS3_PPUTHREAD_TEXT}")
+
+    file(READ "${RPCS3_SPULLVM_CPP}" RPCS3_SPULLVM_TEXT)
+    string(REPLACE
+        "#if defined(__APPLE__)"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)"
+        RPCS3_SPULLVM_TEXT "${RPCS3_SPULLVM_TEXT}")
+    file(WRITE "${RPCS3_SPULLVM_CPP}" "${RPCS3_SPULLVM_TEXT}")
+
+    file(READ "${RPCS3_SPUCOMMON_CPP}" RPCS3_SPUCOMMON_TEXT)
+    string(REPLACE
+        "#if defined(__APPLE__)"
+        "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)"
+        RPCS3_SPUCOMMON_TEXT "${RPCS3_SPUCOMMON_TEXT}")
+    file(WRITE "${RPCS3_SPUCOMMON_CPP}" "${RPCS3_SPUCOMMON_TEXT}")
 
     file(READ "${RPCS3_JIT_H}" RPCS3_JIT_TEXT)
     if(NOT RPCS3_JIT_TEXT MATCHES "VSHIFT_RPCS3_IOS")
