@@ -10,11 +10,8 @@ copyrighted assets. Firmware is planned as a user-provided runtime input.
 ## Current status
 
 The shared iPhone 15 proof of concept returns `42` in both JIT and JIT-less
-modes. On `main`, the extracted PS4 firmware root is validated, real PS4
-SELF/ELF headers are inspected, and `Launch PS4 screen` opens the first
-root-backed HLE/display surface. Original protected VSH code execution remains
-the next CPU/HLE milestone. The PS5 PUP/SELF inspection work remains available
-on `ps5`.
+modes. The next active milestone on `main` is the PS4 firmware-root and VSH
+path. The PS5 PUP/SELF inspection work remains available on `ps5`.
 
 See [docs/BRANCHES.md](docs/BRANCHES.md) for the branch policy.
 
