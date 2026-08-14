@@ -38,6 +38,10 @@ set(USE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 # mode in RPCS3; the target still contains the real PPU/SPU, LV2/HLE, VFS,
 # firmware loader, and RSX code.
 set(ANDROID TRUE)
+# RPCS3 uses the Android CMake switch to omit desktop-only dependencies. zstd
+# also reads the Android API level while configuring, even for this headless
+# reuse on Apple platforms.
+set(ANDROID_PLATFORM_LEVEL 24 CACHE STRING "RPCS3 headless compatibility API" FORCE)
 
 # The Android/headless branch of the current upstream CMake file does not
 # create this optional target before declaring its public alias.  Supplying an
