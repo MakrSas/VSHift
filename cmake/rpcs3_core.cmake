@@ -93,6 +93,8 @@ set(RPCS3_SPUCOMMON_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp")
 set(RPCS3_CUBEB_CMAKE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/cubeb/cubeb/CMakeLists.txt")
+set(RPCS3_FFMPEG_CMAKE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/ffmpeg/CMakeLists.txt")
 set(RPCS3_ASMJIT_VIRTMEM_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/asmjit/asmjit/src/asmjit/core/virtmem.cpp")
 set(RPCS3_NP_REQUESTS_CPP
@@ -304,6 +306,32 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             "if(USE_AUDIOUNIT AND NOT CMAKE_SYSTEM_NAME STREQUAL \"iOS\")"
             RPCS3_CUBEB_TEXT "${RPCS3_CUBEB_TEXT}")
         file(WRITE "${RPCS3_CUBEB_CMAKE}" "${RPCS3_CUBEB_TEXT}")
+    endif()
+
+    # RPCS3's bundled FFmpeg recipe uses the same Apple framework list for
+    # macOS and iOS.  The iPhoneOS SDK does not provide the macOS AudioUnit,
+    # AudioToolbox, and CoreAudio link targets used by that desktop profile;
+    # VSHift also starts with headless audio, so do not propagate them into
+    # the iOS application link.
+    file(READ "${RPCS3_FFMPEG_CMAKE}" RPCS3_FFMPEG_TEXT)
+    if(NOT RPCS3_FFMPEG_TEXT MATCHES "VSHIFT_RPCS3_IOS_AUDIO_FRAMEWORKS")
+        string(REPLACE
+            "\"-framework AudioUnit\""
+            ""
+            RPCS3_FFMPEG_TEXT "${RPCS3_FFMPEG_TEXT}")
+        string(REPLACE
+            "\"-framework AudioToolbox\""
+            ""
+            RPCS3_FFMPEG_TEXT "${RPCS3_FFMPEG_TEXT}")
+        string(REPLACE
+            "\"-framework CoreAudio\""
+            ""
+            RPCS3_FFMPEG_TEXT "${RPCS3_FFMPEG_TEXT}")
+        string(REPLACE
+            "elseif (APPLE)\n"
+            "elseif (APPLE)\n\t# VSHIFT_RPCS3_IOS_AUDIO_FRAMEWORKS\n"
+            RPCS3_FFMPEG_TEXT "${RPCS3_FFMPEG_TEXT}")
+        file(WRITE "${RPCS3_FFMPEG_CMAKE}" "${RPCS3_FFMPEG_TEXT}")
     endif()
 
     file(READ "${RPCS3_THREAD_CPP}" RPCS3_THREAD_TEXT)
