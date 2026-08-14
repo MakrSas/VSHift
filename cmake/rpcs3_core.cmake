@@ -14,6 +14,14 @@ enable_language(C)
 # dependencies which test it during configure.
 set(CMAKE_MINIMUM_REQUIRED_VERSION 3.28)
 
+# The upstream root normally generates this header after adding `Emu`. Keep
+# generated files out of the submodule checkout while still compiling the
+# version implementation required by System.cpp and Thread.cpp.
+include("${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/git-version.cmake")
+set(RPCS3_GENERATED_DIR "${CMAKE_BINARY_DIR}/rpcs3-generated")
+file(MAKE_DIRECTORY "${RPCS3_GENERATED_DIR}")
+gen_git_version("${RPCS3_GENERATED_DIR}")
+
 set(USE_NATIVE_INSTRUCTIONS OFF CACHE BOOL "" FORCE)
 set(USE_LTO OFF CACHE BOOL "" FORCE)
 set(USE_VULKAN OFF CACHE BOOL "" FORCE)
@@ -58,11 +66,14 @@ set_property(TARGET rpcs3_emu PROPERTY CXX_STANDARD 23)
 set_property(TARGET rpcs3_emu PROPERTY CXX_STANDARD_REQUIRED ON)
 
 target_include_directories(rpcs3_emu PUBLIC
+    "${RPCS3_GENERATED_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty")
 
 target_compile_definitions(rpcs3_emu PUBLIC VSHIFT_RPCS3_HEADLESS=1)
+target_sources(rpcs3_emu PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/rpcs3_version.cpp")
 
 add_library(vshift_ps3_core STATIC
     "${CMAKE_CURRENT_SOURCE_DIR}/core/ps3/rpcs3_core.cpp")
