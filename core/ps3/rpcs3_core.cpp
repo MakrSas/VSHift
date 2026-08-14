@@ -169,6 +169,10 @@ BootReport Rpcs3Core::StartVsh(
     Emu.SetForceBoot(true);
     Emu.Init();
 
+    // Init loads RPCS3's desktop config and restores the default VFS values;
+    // re-apply the mobile sandbox root before remounting the guest devices.
+    g_cfg_vfs.emulator_dir.set(emulator_root);
+
     std::filesystem::create_directories(emulator_directory / "dev_hdd0", ec);
     std::filesystem::create_directories(emulator_directory / "dev_hdd1", ec);
     std::filesystem::create_directories(emulator_directory / "dev_bdvd", ec);
