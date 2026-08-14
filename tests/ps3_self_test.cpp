@@ -107,8 +107,12 @@ std::vector<std::uint8_t> BuildSelf() {
     WriteU32BE(metadata, 0x34, 0);
     WriteU32BE(metadata, 0x4c, 1);
     std::vector<std::uint8_t> encrypted_metadata;
-    assert(vshift::crypto::AesCtrCrypt(info_key, info_iv, metadata,
-                                       encrypted_metadata).ok());
+    const auto crypto = vshift::crypto::AesCtrCrypt(
+        info_key, info_iv, metadata, encrypted_metadata);
+    if (!crypto.ok()) {
+        std::cerr << crypto.error << '\n';
+        return {};
+    }
     std::copy(encrypted_metadata.begin(), encrypted_metadata.end(),
               bytes.begin() + kMetadataOffset);
     bytes[kDataOffset + 0] = 0x60;
@@ -122,6 +126,9 @@ std::vector<std::uint8_t> BuildSelf() {
 
 int main() {
     const auto bytes = BuildSelf();
+    if (bytes.empty()) {
+        return 1;
+    }
     const auto parsed = vshift::loader::ParsePs3Self(bytes);
     if (!parsed.ok()) {
         std::cerr << parsed.error << '\n';
