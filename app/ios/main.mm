@@ -12,6 +12,7 @@
 #include "core/loader/self.h"
 #include "core/loader/self_loader.h"
 #include "core/memory/guest_memory.h"
+#include "core/video/framebuffer.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -22,6 +23,8 @@
 
 @interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate>
 @property(nonatomic, strong) UILabel *statusLabel;
+@property(nonatomic, strong) UILabel *guestFrameStateLabel;
+@property(nonatomic, strong) UIImageView *guestFrameView;
 @property(nonatomic, strong) UIButton *exportManifestButton;
 @property(nonatomic, strong) NSURL *manifestURL;
 @property(nonatomic, strong) NSURL *firmwareRootURL;
@@ -116,6 +119,28 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     statusStack.spacing = 8.0;
     statusStack.translatesAutoresizingMaskIntoConstraints = NO;
     [statusCard addSubview:statusStack];
+
+    UIView *displayCard = [[UIView alloc] init];
+    displayCard.backgroundColor = UIColor.blackColor;
+    displayCard.layer.cornerRadius = 24.0;
+    displayCard.clipsToBounds = YES;
+    displayCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
+
+    self.guestFrameView = [[UIImageView alloc] init];
+    self.guestFrameView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.guestFrameView.contentMode = UIViewContentModeScaleAspectFit;
+    self.guestFrameView.hidden = YES;
+    self.guestFrameView.accessibilityLabel = @"Guest framebuffer";
+
+    self.guestFrameStateLabel = [[UILabel alloc] init];
+    self.guestFrameStateLabel.text = @"Waiting for guest video output";
+    self.guestFrameStateLabel.textColor = UIColor.whiteColor;
+    self.guestFrameStateLabel.textAlignment = NSTextAlignmentCenter;
+    self.guestFrameStateLabel.numberOfLines = 0;
+    self.guestFrameStateLabel.translatesAutoresizingMaskIntoConstraints = NO;
+
+    [displayCard addSubview:self.guestFrameView];
+    [displayCard addSubview:self.guestFrameStateLabel];
 
     UILabel *firmwareHeader = [[UILabel alloc] init];
     firmwareHeader.text = @"FIRMWARE";
@@ -230,6 +255,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 
     [content addArrangedSubview:header];
     [content addArrangedSubview:statusCard];
+    [content addArrangedSubview:displayCard];
     [content addArrangedSubview:firmwareCard];
     [content addArrangedSubview:bootCard];
 
@@ -247,6 +273,14 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         [statusStack.trailingAnchor constraintEqualToAnchor:statusCard.layoutMarginsGuide.trailingAnchor],
         [statusStack.topAnchor constraintEqualToAnchor:statusCard.layoutMarginsGuide.topAnchor],
         [statusStack.bottomAnchor constraintEqualToAnchor:statusCard.layoutMarginsGuide.bottomAnchor],
+        [displayCard.heightAnchor constraintEqualToConstant:220.0],
+        [self.guestFrameView.leadingAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.leadingAnchor],
+        [self.guestFrameView.trailingAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.trailingAnchor],
+        [self.guestFrameView.topAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.topAnchor],
+        [self.guestFrameView.bottomAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.bottomAnchor],
+        [self.guestFrameStateLabel.leadingAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.leadingAnchor],
+        [self.guestFrameStateLabel.trailingAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.trailingAnchor],
+        [self.guestFrameStateLabel.centerYAnchor constraintEqualToAnchor:displayCard.centerYAnchor],
         [firmwareStack.leadingAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.leadingAnchor],
         [firmwareStack.trailingAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.trailingAnchor],
         [firmwareStack.topAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.topAnchor],
@@ -381,7 +415,13 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 
 - (void)attemptRealPS4BootAtURL:(NSURL *)rootURL {
     const BOOL accessed = [rootURL startAccessingSecurityScopedResource];
-    vshift::boot::Ps4BootSession session;
+    self.guestFrameView.image = nil;
+    self.guestFrameView.hidden = YES;
+    self.guestFrameStateLabel.text = @"Waiting for guest video output";
+    vshift::boot::Ps4BootSession session(
+        [self](const vshift::video::GuestFrame& frame) {
+            return [self presentGuestFrame:frame];
+        });
     const auto report = session.Run(
         [&](std::string_view relativePath) -> vshift::boot::BootFile {
             NSString *relative = [NSString stringWithUTF8String:
@@ -434,13 +474,62 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         return;
     }
     if (report.modules_mapped()) {
-        self.statusLabel.text = [NSString stringWithFormat:
-            @"REAL PS4 BOOT PATH READY\nSceSysCore: %lu segments\nSceShellCore: %lu segments\nGuest CPU execution and GPU frame presentation are next; no screen is claimed yet.",
-            static_cast<unsigned long>(report.syscore.mapped_segments),
-            static_cast<unsigned long>(report.shellcore.mapped_segments)];
+        const auto *frame = session.video_output().last_frame();
+        if (frame != nullptr) {
+            self.statusLabel.text = [NSString stringWithFormat:
+                @"PS4 GUEST FRAME PRESENTED\nSceSysCore: %lu segments\nSceShellCore: %lu segments\nFrame: %ux%u",
+                static_cast<unsigned long>(report.syscore.mapped_segments),
+                static_cast<unsigned long>(report.shellcore.mapped_segments),
+                frame->description.width, frame->description.height];
+        } else {
+            self.statusLabel.text = [NSString stringWithFormat:
+                @"REAL PS4 BOOT PATH READY\nSceSysCore: %lu segments\nSceShellCore: %lu segments\nNo guest video frame was submitted.",
+                static_cast<unsigned long>(report.syscore.mapped_segments),
+                static_cast<unsigned long>(report.shellcore.mapped_segments)];
+        }
     } else {
         self.statusLabel.text = @"REAL PS4 BOOT STOPPED\nNo modules were mapped.";
     }
+}
+
+- (BOOL)presentGuestFrame:(const vshift::video::GuestFrame&)frame {
+    if (frame.description.format != vshift::video::PixelFormat::Rgba8 &&
+        frame.description.format != vshift::video::PixelFormat::Bgra8) {
+        self.guestFrameStateLabel.text = @"Unsupported guest pixel format";
+        return NO;
+    }
+
+    NSData *pixelData = [NSData dataWithBytes:frame.pixels.data()
+                                       length:frame.pixels.size()];
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData(
+        (__bridge CFDataRef)pixelData);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGBitmapInfo bitmapInfo = frame.description.format ==
+                                      vshift::video::PixelFormat::Bgra8
+                                  ? (kCGBitmapByteOrder32Little |
+                                     kCGImageAlphaFirst)
+                                  : (kCGBitmapByteOrderDefault |
+                                     kCGImageAlphaLast);
+    CGImageRef image = CGImageCreate(
+        frame.description.width, frame.description.height, 8, 32,
+        frame.description.bytes_per_row, colorSpace, bitmapInfo, provider,
+        nullptr, false, kCGRenderingIntentDefault);
+    if (image == nullptr) {
+        CGColorSpaceRelease(colorSpace);
+        CGDataProviderRelease(provider);
+        self.guestFrameStateLabel.text = @"Guest frame could not be decoded";
+        return NO;
+    }
+
+    self.guestFrameView.image = [UIImage imageWithCGImage:image];
+    self.guestFrameView.hidden = NO;
+    self.guestFrameStateLabel.text = [NSString stringWithFormat:
+        @"Guest framebuffer · %ux%u",
+        frame.description.width, frame.description.height];
+    CGImageRelease(image);
+    CGColorSpaceRelease(colorSpace);
+    CGDataProviderRelease(provider);
+    return YES;
 }
 
 - (void)inspectFirmwareRootAtURL:(NSURL *)url {

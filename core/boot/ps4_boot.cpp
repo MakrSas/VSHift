@@ -5,8 +5,12 @@
 #include "core/loader/self.h"
 
 #include <span>
+#include <utility>
 
 namespace vshift::boot {
+
+Ps4BootSession::Ps4BootSession(video::FramePresenter frame_presenter)
+    : video_output_(std::move(frame_presenter)) {}
 
 namespace {
 
@@ -77,8 +81,9 @@ Ps4BootReport Ps4BootSession::Run(const BootFileReader& read_file) {
     }
 
     report.stage = Ps4BootStage::SysCore;
+    firmware::ReadOnlyVfs vfs(read_file);
     report.syscore = LoadModule(
-        "system/sys/SceSysCore.elf", read_file("system/sys/SceSysCore.elf"),
+        "system/sys/SceSysCore.elf", vfs.ReadFile("system/sys/SceSysCore.elf"),
         syscore_memory_);
     if (!report.syscore.mapped()) {
         report.error = report.syscore.error.empty()
@@ -101,7 +106,7 @@ Ps4BootReport Ps4BootSession::Run(const BootFileReader& read_file) {
     report.stage = Ps4BootStage::ShellCore;
     report.shellcore = LoadModule(
         "system/vsh/SceShellCore.elf",
-        read_file("system/vsh/SceShellCore.elf"), shellcore_memory_);
+        vfs.ReadFile("system/vsh/SceShellCore.elf"), shellcore_memory_);
     if (!report.shellcore.mapped()) {
         report.error = report.shellcore.error.empty()
                            ? "SceShellCore.elf was not mapped"

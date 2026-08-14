@@ -23,8 +23,10 @@ add_library(vshift_core STATIC
     core/loader/self.cpp
     core/loader/self_loader.cpp
     core/firmware/catalog.cpp
+    core/firmware/vfs.cpp
     core/firmware/slb2.cpp
     core/firmware/pup.cpp
+    core/video/framebuffer.cpp
 )
 
 target_include_directories(vshift_core PUBLIC
@@ -105,6 +107,16 @@ if(VSHIFT_BUILD_TESTS)
     )
     target_link_libraries(vshift_x86_runtime_test PRIVATE vshift_core)
 
+    add_executable(vshift_vfs_test
+        tests/vfs_test.cpp
+    )
+    target_link_libraries(vshift_vfs_test PRIVATE vshift_core)
+
+    add_executable(vshift_framebuffer_test
+        tests/framebuffer_test.cpp
+    )
+    target_link_libraries(vshift_framebuffer_test PRIVATE vshift_core)
+
     add_test(NAME vshift_jit_smoke COMMAND vshift_jit_smoke)
     add_test(NAME vshift_ir_test COMMAND vshift_ir_test)
     add_test(NAME vshift_differential_test COMMAND vshift_differential_test)
@@ -118,6 +130,8 @@ if(VSHIFT_BUILD_TESTS)
     add_test(NAME vshift_self_test COMMAND vshift_self_test)
     add_test(NAME vshift_ps4_boot_test COMMAND vshift_ps4_boot_test)
     add_test(NAME vshift_x86_runtime_test COMMAND vshift_x86_runtime_test)
+    add_test(NAME vshift_vfs_test COMMAND vshift_vfs_test)
+    add_test(NAME vshift_framebuffer_test COMMAND vshift_framebuffer_test)
 endif()
 
 add_executable(vshift_firmware_inspect

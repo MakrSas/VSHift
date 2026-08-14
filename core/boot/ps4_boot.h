@@ -1,6 +1,8 @@
 #pragma once
 
+#include "core/firmware/vfs.h"
 #include "core/loader/self_loader.h"
+#include "core/video/framebuffer.h"
 
 #include <cstdint>
 #include <functional>
@@ -10,14 +12,8 @@
 
 namespace vshift::boot {
 
-struct BootFile final {
-    std::vector<std::uint8_t> bytes;
-    std::string error;
-
-    bool ok() const noexcept { return error.empty() && !bytes.empty(); }
-};
-
-using BootFileReader = std::function<BootFile(std::string_view relative_path)>;
+using BootFile = firmware::VfsFile;
+using BootFileReader = firmware::VfsReader;
 
 enum class Ps4BootStage : std::uint8_t {
     None = 0,
@@ -61,7 +57,14 @@ struct Ps4BootReport final {
 // keys or protected SELF transformation is attempted here.
 class Ps4BootSession final {
 public:
+    explicit Ps4BootSession(video::FramePresenter frame_presenter = {});
+
     Ps4BootReport Run(const BootFileReader& read_file);
+
+    video::FrameBuffer& video_output() noexcept { return video_output_; }
+    const video::FrameBuffer& video_output() const noexcept {
+        return video_output_;
+    }
 
     const memory::GuestMemory& syscore_memory() const noexcept {
         return syscore_memory_;
@@ -73,6 +76,7 @@ public:
 private:
     memory::GuestMemory syscore_memory_;
     memory::GuestMemory shellcore_memory_;
+    video::FrameBuffer video_output_;
 };
 
 } // namespace vshift::boot
