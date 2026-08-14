@@ -5,8 +5,11 @@
 #include "core/firmware/ps3_pup.h"
 #include "core/firmware/ps3_tar.h"
 #include "core/loader/ps3_sce.h"
+#include "core/loader/ps3_self.h"
+#include "core/cpu/ppu_runtime.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <span>
@@ -24,22 +27,218 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
     VSHiftButtonStyleTinted,
 };
 
+@interface VSHiftDisplayViewController : UIViewController <UIGestureRecognizerDelegate>
+@property(nonatomic, strong) UIImageView *framebufferView;
+@property(nonatomic, strong) UILabel *displayStatusLabel;
+@property(nonatomic, strong) UIVisualEffectView *controlBar;
+@property(nonatomic, strong) UIButton *pauseButton;
+@property(nonatomic, copy) dispatch_block_t closeHandler;
+@property(nonatomic, copy) dispatch_block_t powerHandler;
+@property(nonatomic, copy) void (^pauseHandler)(BOOL paused);
+@property(nonatomic, assign) BOOL runtimePaused;
+- (void)updateFramebufferImage:(UIImage *)image;
+- (void)updateDisplayStatus:(NSString *)status;
+@end
+
+@implementation VSHiftDisplayViewController
+
+- (UIButton *)displayControlWithSymbol:(NSString *)symbol action:(SEL)action {
+    UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
+    configuration.image = [UIImage systemImageNamed:symbol];
+    configuration.preferredSymbolConfigurationForImage =
+        [UIImageSymbolConfiguration configurationWithPointSize:19.0 weight:UIImageSymbolWeightMedium];
+    configuration.baseForegroundColor = UIColor.whiteColor;
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.configuration = configuration;
+    button.translatesAutoresizingMaskIntoConstraints = NO;
+    [button.widthAnchor constraintEqualToConstant:44.0].active = YES;
+    [button.heightAnchor constraintEqualToConstant:44.0].active = YES;
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = UIColor.blackColor;
+    self.view.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+
+    self.framebufferView = [[UIImageView alloc] initWithFrame:CGRectZero];
+    self.framebufferView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.framebufferView.backgroundColor = UIColor.blackColor;
+    self.framebufferView.contentMode = UIViewContentModeScaleAspectFit;
+    self.framebufferView.accessibilityLabel = @"PS3 display";
+    [self.view addSubview:self.framebufferView];
+
+    self.displayStatusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.displayStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.displayStatusLabel.text = @"Starting virtual console…";
+    self.displayStatusLabel.textColor = UIColor.secondaryLabelColor;
+    self.displayStatusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    self.displayStatusLabel.adjustsFontForContentSizeCategory = YES;
+    self.displayStatusLabel.textAlignment = NSTextAlignmentCenter;
+    self.displayStatusLabel.numberOfLines = 0;
+    [self.view addSubview:self.displayStatusLabel];
+
+    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark];
+    self.controlBar = [[UIVisualEffectView alloc] initWithEffect:blur];
+    self.controlBar.translatesAutoresizingMaskIntoConstraints = NO;
+    self.controlBar.layer.cornerRadius = 24.0;
+    self.controlBar.clipsToBounds = YES;
+
+    UIButton *back = [self displayControlWithSymbol:@"chevron.backward" action:@selector(closeDisplay)];
+    UIButton *power = [self displayControlWithSymbol:@"power" action:@selector(powerOff)];
+    self.pauseButton = [self displayControlWithSymbol:@"pause.fill" action:@selector(togglePause)];
+    UIButton *fit = [self displayControlWithSymbol:@"arrow.up.left.and.arrow.down.right" action:@selector(toggleDisplayFit)];
+    back.accessibilityLabel = @"Back";
+    power.accessibilityLabel = @"Power off";
+    self.pauseButton.accessibilityLabel = @"Pause";
+    fit.accessibilityLabel = @"Change display scaling";
+    UIStackView *controls = [[UIStackView alloc] initWithArrangedSubviews:@[back, power, self.pauseButton, fit]];
+    controls.translatesAutoresizingMaskIntoConstraints = NO;
+    controls.axis = UILayoutConstraintAxisHorizontal;
+    controls.alignment = UIStackViewAlignmentCenter;
+    controls.spacing = 2.0;
+    [self.controlBar.contentView addSubview:controls];
+    [self.view addSubview:self.controlBar];
+
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleControls)];
+    tap.cancelsTouchesInView = NO;
+    tap.delegate = self;
+    [self.view addGestureRecognizer:tap];
+
+    UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [self.framebufferView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.framebufferView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.framebufferView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [self.framebufferView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+        [self.displayStatusLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [self.displayStatusLabel.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [self.displayStatusLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor constant:24.0],
+        [self.displayStatusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:safe.trailingAnchor constant:-24.0],
+        [self.controlBar.topAnchor constraintEqualToAnchor:safe.topAnchor constant:10.0],
+        [self.controlBar.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-12.0],
+        [controls.leadingAnchor constraintEqualToAnchor:self.controlBar.contentView.leadingAnchor constant:4.0],
+        [controls.trailingAnchor constraintEqualToAnchor:self.controlBar.contentView.trailingAnchor constant:-4.0],
+        [controls.topAnchor constraintEqualToAnchor:self.controlBar.contentView.topAnchor constant:2.0],
+        [controls.bottomAnchor constraintEqualToAnchor:self.controlBar.contentView.bottomAnchor constant:-2.0],
+    ]];
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    if (@available(iOS 16.0, *)) {
+        UIWindowScene *scene = self.view.window.windowScene;
+        UIWindowSceneGeometryPreferencesIOS *preferences =
+            [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:UIInterfaceOrientationMaskLandscape];
+        [scene requestGeometryUpdateWithPreferences:preferences errorHandler:^(NSError *error) {
+            (void)error;
+        }];
+        [self setNeedsUpdateOfSupportedInterfaceOrientations];
+    }
+}
+
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskLandscape;
+}
+
+- (BOOL)prefersHomeIndicatorAutoHidden {
+    return YES;
+}
+
+- (UIRectEdge)preferredScreenEdgesDeferringSystemGestures {
+    return UIRectEdgeAll;
+}
+
+- (BOOL)prefersStatusBarHidden {
+    return YES;
+}
+
+- (void)closeDisplay {
+    if (self.closeHandler != nil) self.closeHandler();
+    UIViewController *presenting = self.presentingViewController;
+    [self dismissViewControllerAnimated:YES completion:^{
+        if (@available(iOS 16.0, *)) {
+            UIWindowScene *scene = presenting.view.window.windowScene;
+            UIWindowSceneGeometryPreferencesIOS *preferences =
+                [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:UIInterfaceOrientationMaskPortrait];
+            [scene requestGeometryUpdateWithPreferences:preferences errorHandler:^(NSError *error) {
+                (void)error;
+            }];
+            [presenting setNeedsUpdateOfSupportedInterfaceOrientations];
+        }
+    }];
+}
+
+- (void)powerOff {
+    if (self.powerHandler != nil) self.powerHandler();
+    [self closeDisplay];
+}
+
+- (void)togglePause {
+    self.runtimePaused = !self.runtimePaused;
+    UIButtonConfiguration *configuration = self.pauseButton.configuration;
+    configuration.image = [UIImage systemImageNamed:self.runtimePaused ? @"play.fill" : @"pause.fill"];
+    self.pauseButton.configuration = configuration;
+    if (self.pauseHandler != nil) self.pauseHandler(self.runtimePaused);
+}
+
+- (void)toggleDisplayFit {
+    self.framebufferView.contentMode = self.framebufferView.contentMode == UIViewContentModeScaleAspectFit
+        ? UIViewContentModeScaleAspectFill
+        : UIViewContentModeScaleAspectFit;
+}
+
+- (void)toggleControls {
+    [UIView animateWithDuration:0.2 animations:^{
+        self.controlBar.alpha = self.controlBar.alpha > 0.5 ? 0.0 : 1.0;
+    }];
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    (void)gestureRecognizer;
+    return ![touch.view isDescendantOfView:self.controlBar];
+}
+
+- (void)updateFramebufferImage:(UIImage *)image {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.framebufferView.image = image;
+        self.displayStatusLabel.hidden = image != nil;
+    });
+}
+
+- (void)updateDisplayStatus:(NSString *)status {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.displayStatusLabel.text = status;
+        self.displayStatusLabel.hidden = NO;
+    });
+}
+
+@end
+
 @interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate>
 @property(nonatomic, strong) UIScrollView *scrollView;
 @property(nonatomic, strong) UIStackView *contentStack;
 @property(nonatomic, strong) UILabel *statusLabel;
-@property(nonatomic, strong) UILabel *guestFrameStateLabel;
-@property(nonatomic, strong) UIImageView *guestFrameView;
 @property(nonatomic, strong) UIButton *ps3BootButton;
 @property(nonatomic, strong) UIButton *exportManifestButton;
 @property(nonatomic, strong) NSURL *manifestURL;
 @property(nonatomic, strong) NSURL *ps3FirmwareURL;
 @property(nonatomic, strong) NSMutableArray<NSMutableDictionary *> *ps3Machines;
 @property(nonatomic, strong) NSMutableDictionary *activePs3Machine;
+@property(nonatomic, strong) VSHiftDisplayViewController *displayViewController;
 @property(nonatomic, assign) VSHiftPS3Screen ps3Screen;
 @property(nonatomic, assign) VSHiftPS3Screen settingsReturnScreen;
 @property(nonatomic, assign) BOOL editingPs3Machines;
 @property(nonatomic, assign) BOOL pickingPs3Firmware;
+- (void)submitPS3FramebufferImage:(UIImage *)image;
+- (void)submitPS3FramebufferBGRA8:(const std::uint8_t *)pixels
+                             width:(std::size_t)width
+                            height:(std::size_t)height
+                       bytesPerRow:(std::size_t)bytesPerRow;
+- (void)setPS3DisplayStatus:(NSString *)status;
+- (void)handlePS3RuntimePowerRequest;
+- (void)handlePS3RuntimePauseRequest:(BOOL)paused;
 @end
 
 @implementation VSHiftJITViewController
@@ -52,12 +251,19 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     return value;
 }
 
+static std::uint32_t ReadU32BE(const std::uint8_t *bytes) {
+    return (static_cast<std::uint32_t>(bytes[0]) << 24) |
+           (static_cast<std::uint32_t>(bytes[1]) << 16) |
+           (static_cast<std::uint32_t>(bytes[2]) << 8) |
+           static_cast<std::uint32_t>(bytes[3]);
+}
+
 - (UIColor *)cardColor {
-    return [UIColor colorWithWhite:0.12 alpha:1.0];
+    return UIColor.secondarySystemGroupedBackgroundColor;
 }
 
 - (UIColor *)secondaryCardColor {
-    return [UIColor colorWithWhite:0.17 alpha:1.0];
+    return UIColor.tertiarySystemGroupedBackgroundColor;
 }
 
 - (UILabel *)labelWithText:(NSString *)text
@@ -92,9 +298,11 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     configuration.image = [UIImage systemImageNamed:symbol];
     configuration.imagePadding = 8.0;
     configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    configuration.baseForegroundColor = UIColor.whiteColor;
+    configuration.baseForegroundColor = style == VSHiftButtonStyleFilled
+        ? UIColor.whiteColor
+        : UIColor.labelColor;
     if (style == VSHiftButtonStyleFilled) {
-        configuration.baseBackgroundColor = [UIColor colorWithWhite:0.24 alpha:1.0];
+        configuration.baseBackgroundColor = UIColor.systemBlueColor;
     }
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.configuration = configuration;
@@ -102,30 +310,11 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     return button;
 }
 
-- (UIView *)cardContainingStack:(UIStackView *)stack {
-    UIView *card = [[UIView alloc] init];
-    card.backgroundColor = [self cardColor];
-    card.layer.cornerRadius = 24.0;
-    card.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
-    stack.axis = UILayoutConstraintAxisVertical;
-    stack.spacing = 12.0;
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
-    [card addSubview:stack];
-    [NSLayoutConstraint activateConstraints:@[
-        [stack.leadingAnchor constraintEqualToAnchor:card.layoutMarginsGuide.leadingAnchor],
-        [stack.trailingAnchor constraintEqualToAnchor:card.layoutMarginsGuide.trailingAnchor],
-        [stack.topAnchor constraintEqualToAnchor:card.layoutMarginsGuide.topAnchor],
-        [stack.bottomAnchor constraintEqualToAnchor:card.layoutMarginsGuide.bottomAnchor],
-    ]];
-    return card;
-}
-
 - (void)prepareScreen {
     for (UIView *subview in self.view.subviews.copy) {
         [subview removeFromSuperview];
     }
-    self.view.backgroundColor = UIColor.blackColor;
-    self.view.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
 
     self.scrollView = [[UIScrollView alloc] init];
     self.scrollView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -136,22 +325,33 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     self.contentStack = [[UIStackView alloc] init];
     self.contentStack.translatesAutoresizingMaskIntoConstraints = NO;
     self.contentStack.axis = UILayoutConstraintAxisVertical;
-    self.contentStack.spacing = 18.0;
-    self.contentStack.layoutMargins = UIEdgeInsetsMake(18.0, 20.0, 32.0, 20.0);
-    self.contentStack.layoutMarginsRelativeArrangement = YES;
-    [self.scrollView addSubview:self.contentStack];
+    self.contentStack.spacing = 20.0;
+    UIView *contentContainer = [[UIView alloc] initWithFrame:CGRectZero];
+    contentContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.scrollView addSubview:contentContainer];
+    [contentContainer addSubview:self.contentStack];
 
     [NSLayoutConstraint activateConstraints:@[
         [self.scrollView.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
         [self.scrollView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
         [self.scrollView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [self.scrollView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
-        [self.contentStack.leadingAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.leadingAnchor],
-        [self.contentStack.trailingAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.trailingAnchor],
-        [self.contentStack.topAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.topAnchor],
-        [self.contentStack.bottomAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.bottomAnchor],
-        [self.contentStack.widthAnchor constraintEqualToAnchor:self.scrollView.frameLayoutGuide.widthAnchor],
+        [contentContainer.leadingAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.leadingAnchor],
+        [contentContainer.trailingAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.trailingAnchor],
+        [contentContainer.topAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.topAnchor],
+        [contentContainer.bottomAnchor constraintEqualToAnchor:self.scrollView.contentLayoutGuide.bottomAnchor],
+        [contentContainer.widthAnchor constraintEqualToAnchor:self.scrollView.frameLayoutGuide.widthAnchor],
+        [self.contentStack.topAnchor constraintEqualToAnchor:contentContainer.topAnchor],
+        [self.contentStack.bottomAnchor constraintEqualToAnchor:contentContainer.bottomAnchor constant:-28.0],
+        [self.contentStack.centerXAnchor constraintEqualToAnchor:contentContainer.centerXAnchor],
+        [self.contentStack.leadingAnchor constraintGreaterThanOrEqualToAnchor:contentContainer.leadingAnchor constant:16.0],
+        [self.contentStack.trailingAnchor constraintLessThanOrEqualToAnchor:contentContainer.trailingAnchor constant:-16.0],
+        [self.contentStack.widthAnchor constraintLessThanOrEqualToConstant:720.0],
     ]];
+    NSLayoutConstraint *fillWidth =
+        [self.contentStack.widthAnchor constraintEqualToAnchor:contentContainer.widthAnchor constant:-32.0];
+    fillWidth.priority = UILayoutPriorityDefaultHigh;
+    fillWidth.active = YES;
 }
 
 - (void)addSectionTitle:(NSString *)title {
@@ -161,21 +361,27 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     [self.contentStack addArrangedSubview:label];
 }
 
-- (UIStackView *)topBarWithBackTitle:(NSString *)backTitle
-                              action:(SEL)backAction
-                           trailing:(NSArray<UIButton *> *)trailing {
-    UIButton *backButton = [self buttonWithTitle:backTitle
-                                           symbol:@"chevron.left"
-                                             style:VSHiftButtonStyleGray
-                                           action:backAction];
-    UIStackView *bar = [[UIStackView alloc] initWithArrangedSubviews:@[backButton]];
-    bar.axis = UILayoutConstraintAxisHorizontal;
-    bar.spacing = 10.0;
-    for (UIButton *button in trailing) {
-        [bar addArrangedSubview:[[UIView alloc] init]];
-        [bar addArrangedSubview:button];
-    }
-    return bar;
+- (void)configureNavigationWithTitle:(NSString *)title
+                          largeTitle:(BOOL)largeTitle
+                                left:(NSArray<UIBarButtonItem *> *)left
+                               right:(NSArray<UIBarButtonItem *> *)right {
+    self.navigationItem.title = title;
+    self.navigationItem.largeTitleDisplayMode = largeTitle
+        ? UINavigationItemLargeTitleDisplayModeAlways
+        : UINavigationItemLargeTitleDisplayModeNever;
+    self.navigationItem.leftBarButtonItems = left;
+    self.navigationItem.rightBarButtonItems = right;
+}
+
+- (UIBarButtonItem *)barButtonWithSystemItem:(UIBarButtonSystemItem)item action:(SEL)action {
+    return [[UIBarButtonItem alloc] initWithBarButtonSystemItem:item target:self action:action];
+}
+
+- (UIBarButtonItem *)barButtonWithImage:(NSString *)symbol action:(SEL)action {
+    return [[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:symbol]
+                                            style:UIBarButtonItemStylePlain
+                                           target:self
+                                           action:action];
 }
 
 - (void)addDetailRow:(NSString *)title
@@ -183,13 +389,13 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
               symbol:(NSString *)symbol
                stack:(UIStackView *)stack {
     UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:symbol]];
-    icon.tintColor = UIColor.whiteColor;
+    icon.tintColor = UIColor.labelColor;
     icon.contentMode = UIViewContentModeScaleAspectFit;
     [icon.widthAnchor constraintEqualToConstant:28.0].active = YES;
 
     UILabel *name = [self labelWithText:title
                                    font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody]
-                                  color:UIColor.whiteColor];
+                                  color:UIColor.labelColor];
     name.font = [UIFont systemFontOfSize:name.font.pointSize weight:UIFontWeightSemibold];
     UILabel *detail = [self labelWithText:value ?: @"—"
                                      font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody]
@@ -202,6 +408,11 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     row.axis = UILayoutConstraintAxisHorizontal;
     row.alignment = UIStackViewAlignmentCenter;
     row.spacing = 12.0;
+    row.layoutMargins = UIEdgeInsetsMake(10.0, 16.0, 10.0, 16.0);
+    row.layoutMarginsRelativeArrangement = YES;
+    [row.heightAnchor constraintGreaterThanOrEqualToConstant:52.0].active = YES;
+    [name setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [detail setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     [stack addArrangedSubview:row];
 }
 
@@ -269,6 +480,10 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     [self rebuildPs3Screen];
 }
 
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskPortrait;
+}
+
 - (void)rebuildPs3Screen {
     [self prepareScreen];
     switch (self.ps3Screen) {
@@ -329,45 +544,42 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
 }
 
 - (void)showPs3LibraryContent {
-    UIButton *addButton = [self buttonWithTitle:@""
-                                          symbol:@"plus"
-                                            style:VSHiftButtonStyleGray
-                                          action:@selector(showPs3Start)];
-    UIButton *settingsButton = [self buttonWithTitle:@"Settings"
-                                               symbol:@"gearshape"
-                                                 style:VSHiftButtonStyleGray
-                                               action:@selector(showPs3LibrarySettings)];
-    UIButton *editButton = [self buttonWithTitle:self.editingPs3Machines ? @"Done" : @"Edit"
-                                            symbol:self.editingPs3Machines ? @"checkmark" : @"pencil"
-                                              style:VSHiftButtonStyleGray
-                                            action:@selector(togglePs3Editing)];
-    UIStackView *topBar = [[UIStackView alloc] initWithArrangedSubviews:@[
-        addButton, [[UIView alloc] init], settingsButton, editButton
-    ]];
-    topBar.axis = UILayoutConstraintAxisHorizontal;
-    topBar.spacing = 10.0;
-    [self.contentStack addArrangedSubview:topBar];
-
-    UILabel *title = [self labelWithText:@"VSHift PS3"
-                                    font:[UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle]
-                                   color:UIColor.whiteColor];
-    title.font = [UIFont systemFontOfSize:title.font.pointSize weight:UIFontWeightBold];
-    [self.contentStack addArrangedSubview:title];
+    UIBarButtonItem *add = [self barButtonWithSystemItem:UIBarButtonSystemItemAdd action:@selector(showPs3Start)];
+    UIBarButtonItem *settings = [self barButtonWithImage:@"gearshape" action:@selector(showPs3LibrarySettings)];
+    UIBarButtonItem *edit = [[UIBarButtonItem alloc]
+        initWithTitle:self.editingPs3Machines ? @"Done" : @"Edit"
+                style:self.editingPs3Machines ? UIBarButtonItemStyleDone : UIBarButtonItemStylePlain
+               target:self
+               action:@selector(togglePs3Editing)];
+    [self configureNavigationWithTitle:@"VSHift PS3"
+                             largeTitle:YES
+                                   left:@[add]
+                                  right:@[edit, settings]];
 
     if (self.ps3Machines.count == 0) {
-        UIStackView *emptyStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-            [self labelWithText:@"No virtual consoles"
-                            font:[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]
-                           color:UIColor.whiteColor],
-            [self labelWithText:@"Create a PS3 console profile, then import your own firmware file."
-                            font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody]
-                           color:UIColor.secondaryLabelColor],
-            [self buttonWithTitle:@"Create virtual console"
-                           symbol:@"gamecontroller"
-                             style:VSHiftButtonStyleFilled
-                           action:@selector(createPs3Machine)]
-        ]];
-        [self.contentStack addArrangedSubview:[self cardContainingStack:emptyStack]];
+        UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"gamecontroller"]];
+        icon.tintColor = UIColor.secondaryLabelColor;
+        icon.contentMode = UIViewContentModeScaleAspectFit;
+        [icon.heightAnchor constraintEqualToConstant:54.0].active = YES;
+        UILabel *emptyTitle = [self labelWithText:@"No Virtual Consoles"
+                                             font:[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]
+                                            color:UIColor.labelColor];
+        emptyTitle.textAlignment = NSTextAlignmentCenter;
+        UILabel *emptyText = [self labelWithText:@"Create a console, import PS3UPDAT.PUP, then start it from the console screen."
+                                            font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody]
+                                           color:UIColor.secondaryLabelColor];
+        emptyText.textAlignment = NSTextAlignmentCenter;
+        UIButton *create = [self buttonWithTitle:@"Create Virtual Console"
+                                          symbol:@"plus"
+                                            style:VSHiftButtonStyleFilled
+                                          action:@selector(showPs3Start)];
+        [create.heightAnchor constraintGreaterThanOrEqualToConstant:50.0].active = YES;
+        UIStackView *emptyStack = [[UIStackView alloc] initWithArrangedSubviews:@[icon, emptyTitle, emptyText, create]];
+        emptyStack.alignment = UIStackViewAlignmentFill;
+        emptyStack.spacing = 12.0;
+        emptyStack.layoutMargins = UIEdgeInsetsMake(56.0, 24.0, 56.0, 24.0);
+        emptyStack.layoutMarginsRelativeArrangement = YES;
+        [self.contentStack addArrangedSubview:emptyStack];
         return;
     }
 
@@ -382,11 +594,15 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
         configuration.subtitle = subtitle;
         configuration.image = [UIImage systemImageNamed:@"gamecontroller.fill"];
         configuration.imagePadding = 14.0;
-        configuration.baseForegroundColor = UIColor.whiteColor;
+        configuration.baseForegroundColor = UIColor.labelColor;
         configuration.baseBackgroundColor = [self secondaryCardColor];
         configuration.cornerStyle = UIButtonConfigurationCornerStyleLarge;
+        configuration.titleAlignment = UIButtonConfigurationTitleAlignmentLeading;
+        configuration.contentInsets = NSDirectionalEdgeInsetsMake(14.0, 16.0, 14.0, 16.0);
         UIButton *machineButton = [UIButton buttonWithType:UIButtonTypeSystem];
         machineButton.configuration = configuration;
+        machineButton.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
+        [machineButton.heightAnchor constraintGreaterThanOrEqualToConstant:76.0].active = YES;
         machineButton.tag = index;
         [machineButton addTarget:self action:@selector(openPs3Machine:) forControlEvents:UIControlEventTouchUpInside];
 
@@ -408,14 +624,10 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
 }
 
 - (void)showPs3StartContent {
-    [self.contentStack addArrangedSubview:[self topBarWithBackTitle:@"Cancel"
-                                                              action:@selector(showPs3Library)
-                                                           trailing:@[]]];
-    UILabel *title = [self labelWithText:@"Start"
-                                    font:[UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle]
-                                   color:UIColor.whiteColor];
-    title.font = [UIFont systemFontOfSize:title.font.pointSize weight:UIFontWeightBold];
-    [self.contentStack addArrangedSubview:title];
+    UIBarButtonItem *cancel = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
+                                                                            target:self
+                                                                            action:@selector(showPs3Library)];
+    [self configureNavigationWithTitle:@"Start" largeTitle:YES left:@[cancel] right:@[]];
 
     [self addSectionTitle:@"Custom"];
     UIButton *newButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -424,10 +636,14 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     newConfiguration.subtitle = @"Create a PS3 console profile from scratch.";
     newConfiguration.image = [UIImage systemImageNamed:@"gamecontroller"];
     newConfiguration.imagePadding = 16.0;
-    newConfiguration.baseForegroundColor = UIColor.whiteColor;
+    newConfiguration.baseForegroundColor = UIColor.labelColor;
     newConfiguration.baseBackgroundColor = [self secondaryCardColor];
     newConfiguration.cornerStyle = UIButtonConfigurationCornerStyleLarge;
+    newConfiguration.titleAlignment = UIButtonConfigurationTitleAlignmentCenter;
+    newConfiguration.imagePlacement = NSDirectionalRectEdgeTop;
+    newConfiguration.contentInsets = NSDirectionalEdgeInsetsMake(26.0, 18.0, 26.0, 18.0);
     newButton.configuration = newConfiguration;
+    [newButton.heightAnchor constraintGreaterThanOrEqualToConstant:154.0].active = YES;
     [newButton addTarget:self action:@selector(createPs3Machine) forControlEvents:UIControlEventTouchUpInside];
     [self.contentStack addArrangedSubview:newButton];
 
@@ -437,43 +653,28 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
                                               style:VSHiftButtonStyleTinted
                                             action:@selector(createPs3MachineAndImport)];
     [self.contentStack addArrangedSubview:importButton];
+    [importButton.heightAnchor constraintGreaterThanOrEqualToConstant:52.0].active = YES;
 }
 
 - (UIView *)displayCard {
     UIView *display = [[UIView alloc] init];
     display.backgroundColor = UIColor.blackColor;
-    display.layer.cornerRadius = 24.0;
+    display.layer.cornerRadius = 18.0;
+    display.layer.cornerCurve = kCACornerCurveContinuous;
     display.clipsToBounds = YES;
-    self.guestFrameView = [[UIImageView alloc] init];
-    self.guestFrameView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.guestFrameView.contentMode = UIViewContentModeScaleAspectFit;
-    self.guestFrameView.hidden = YES;
-    self.guestFrameStateLabel = [self labelWithText:@"PS3 virtual display\nFramebuffer output is not connected yet"
-                                               font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody]
-                                              color:UIColor.whiteColor];
-    self.guestFrameStateLabel.textAlignment = NSTextAlignmentCenter;
-    self.guestFrameStateLabel.translatesAutoresizingMaskIntoConstraints = NO;
     UIButtonConfiguration *playConfiguration = [UIButtonConfiguration plainButtonConfiguration];
     playConfiguration.image = [UIImage systemImageNamed:@"play.circle.fill"];
     playConfiguration.preferredSymbolConfigurationForImage =
-        [UIImageSymbolConfiguration configurationWithPointSize:88.0 weight:UIImageSymbolWeightRegular];
+        [UIImageSymbolConfiguration configurationWithPointSize:76.0 weight:UIImageSymbolWeightRegular];
     playConfiguration.baseForegroundColor = UIColor.whiteColor;
     UIButton *playButton = [UIButton buttonWithType:UIButtonTypeSystem];
     playButton.configuration = playConfiguration;
     [playButton addTarget:self action:@selector(startPs3Machine) forControlEvents:UIControlEventTouchUpInside];
     playButton.translatesAutoresizingMaskIntoConstraints = NO;
-    [display addSubview:self.guestFrameView];
-    [display addSubview:self.guestFrameStateLabel];
     [display addSubview:playButton];
     [NSLayoutConstraint activateConstraints:@[
-        [display.heightAnchor constraintEqualToConstant:224.0],
-        [self.guestFrameView.leadingAnchor constraintEqualToAnchor:display.leadingAnchor],
-        [self.guestFrameView.trailingAnchor constraintEqualToAnchor:display.trailingAnchor],
-        [self.guestFrameView.topAnchor constraintEqualToAnchor:display.topAnchor],
-        [self.guestFrameView.bottomAnchor constraintEqualToAnchor:display.bottomAnchor],
-        [self.guestFrameStateLabel.leadingAnchor constraintEqualToAnchor:display.leadingAnchor constant:16.0],
-        [self.guestFrameStateLabel.trailingAnchor constraintEqualToAnchor:display.trailingAnchor constant:-16.0],
-        [self.guestFrameStateLabel.bottomAnchor constraintEqualToAnchor:display.bottomAnchor constant:-16.0],
+        [display.heightAnchor constraintEqualToAnchor:display.widthAnchor multiplier:9.0 / 16.0],
+        [display.heightAnchor constraintGreaterThanOrEqualToConstant:190.0],
         [playButton.centerXAnchor constraintEqualToAnchor:display.centerXAnchor],
         [playButton.centerYAnchor constraintEqualToAnchor:display.centerYAnchor],
     ]];
@@ -481,22 +682,20 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
 }
 
 - (void)showPs3DetailContent {
-    UIButton *settings = [self buttonWithTitle:@""
-                                         symbol:@"slider.horizontal.3"
-                                           style:VSHiftButtonStyleGray
-                                         action:@selector(showPs3DetailSettings)];
-    [self.contentStack addArrangedSubview:[self topBarWithBackTitle:@""
-                                                              action:@selector(showPs3Library)
-                                                           trailing:@[settings]]];
-
-    UILabel *title = [self labelWithText:[self machineName:self.activePs3Machine]
-                                    font:[UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle]
-                                   color:UIColor.whiteColor];
-    title.font = [UIFont systemFontOfSize:title.font.pointSize weight:UIFontWeightBold];
-    [self.contentStack addArrangedSubview:title];
+    UIBarButtonItem *back = [self barButtonWithImage:@"chevron.backward" action:@selector(showPs3Library)];
+    back.accessibilityLabel = @"Library";
+    UIBarButtonItem *settings = [self barButtonWithImage:@"slider.horizontal.3" action:@selector(showPs3DetailSettings)];
+    [self configureNavigationWithTitle:[self machineName:self.activePs3Machine]
+                             largeTitle:YES
+                                   left:@[back]
+                                  right:@[settings]];
     [self.contentStack addArrangedSubview:[self displayCard]];
 
     UIView *detailsCard = [[UIView alloc] init];
+    detailsCard.backgroundColor = [self cardColor];
+    detailsCard.layer.cornerRadius = 18.0;
+    detailsCard.layer.cornerCurve = kCACornerCurveContinuous;
+    detailsCard.clipsToBounds = YES;
     UIStackView *details = [[UIStackView alloc] init];
     details.axis = UILayoutConstraintAxisVertical;
     details.spacing = 2.0;
@@ -518,9 +717,10 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
 
     UIView *statusCard = [[UIView alloc] init];
     statusCard.backgroundColor = [self cardColor];
-    statusCard.layer.cornerRadius = 24.0;
+    statusCard.layer.cornerRadius = 18.0;
+    statusCard.layer.cornerCurve = kCACornerCurveContinuous;
     statusCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
-    UILabel *statusTitle = [self labelWithText:@"Runtime status" font:[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline] color:UIColor.whiteColor];
+    UILabel *statusTitle = [self labelWithText:@"Runtime Status" font:[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline] color:UIColor.labelColor];
     NSString *lastResult = [self machineValue:self.activePs3Machine key:@"last_result" fallback:@"Import a PS3 firmware file to prepare this console."];
     self.statusLabel = [self labelWithText:lastResult font:[UIFont preferredFontForTextStyle:UIFontTextStyleBody] color:UIColor.secondaryLabelColor];
     UIStackView *statusStack = [[UIStackView alloc] initWithArrangedSubviews:@[statusTitle, self.statusLabel]];
@@ -536,9 +736,12 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     ]];
     [self.contentStack addArrangedSubview:statusCard];
 
-    [self.contentStack addArrangedSubview:[self buttonWithTitle:@"Import PS3UPDAT.PUP" symbol:@"doc.badge.plus" style:VSHiftButtonStyleTinted action:@selector(importPs3Firmware)]];
-    self.ps3BootButton = [self buttonWithTitle:@"Prepare VSH bootstrap" symbol:@"play.tv" style:VSHiftButtonStyleFilled action:@selector(preparePs3VshBootstrap)];
+    UIButton *import = [self buttonWithTitle:@"Import PS3UPDAT.PUP" symbol:@"doc.badge.plus" style:VSHiftButtonStyleTinted action:@selector(importPs3Firmware)];
+    [import.heightAnchor constraintGreaterThanOrEqualToConstant:50.0].active = YES;
+    [self.contentStack addArrangedSubview:import];
+    self.ps3BootButton = [self buttonWithTitle:@"Start" symbol:@"play.fill" style:VSHiftButtonStyleFilled action:@selector(startPs3Machine)];
     self.ps3BootButton.enabled = self.ps3FirmwareURL != nil;
+    [self.ps3BootButton.heightAnchor constraintGreaterThanOrEqualToConstant:52.0].active = YES;
     [self.contentStack addArrangedSubview:self.ps3BootButton];
     self.exportManifestButton = [self buttonWithTitle:@"Export manifest" symbol:@"square.and.arrow.up" style:VSHiftButtonStyleGray action:@selector(exportManifest)];
     self.exportManifestButton.enabled = self.manifestURL != nil;
@@ -550,10 +753,8 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     SEL backAction = self.settingsReturnScreen == VSHiftPS3ScreenDetail
         ? @selector(showPs3Detail)
         : @selector(showPs3Library);
-    [self.contentStack addArrangedSubview:[self topBarWithBackTitle:@"" action:backAction trailing:@[]]];
-    UILabel *title = [self labelWithText:@"Settings" font:[UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle] color:UIColor.whiteColor];
-    title.font = [UIFont systemFontOfSize:title.font.pointSize weight:UIFontWeightBold];
-    [self.contentStack addArrangedSubview:title];
+    UIBarButtonItem *back = [self barButtonWithImage:@"chevron.backward" action:backAction];
+    [self configureNavigationWithTitle:@"Settings" largeTitle:YES left:@[back] right:@[]];
     [self addSectionTitle:@"Console"];
     [self addSettingsGroup:@[
         @[@"Information", @"info.circle", @"PS3 console profiles and firmware status"],
@@ -579,11 +780,15 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
         configuration.subtitle = item[2];
         configuration.image = [UIImage systemImageNamed:item[1]];
         configuration.imagePadding = 14.0;
-        configuration.baseForegroundColor = UIColor.whiteColor;
+        configuration.baseForegroundColor = UIColor.labelColor;
         configuration.baseBackgroundColor = [self cardColor];
         configuration.cornerStyle = UIButtonConfigurationCornerStyleLarge;
+        configuration.titleAlignment = UIButtonConfigurationTitleAlignmentLeading;
+        configuration.contentInsets = NSDirectionalEdgeInsetsMake(12.0, 16.0, 12.0, 16.0);
         UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
         button.configuration = configuration;
+        button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeading;
+        [button.heightAnchor constraintGreaterThanOrEqualToConstant:64.0].active = YES;
         button.accessibilityValue = item[2];
         [button addTarget:self action:@selector(showPs3SettingsInfo:) forControlEvents:UIControlEventTouchUpInside];
         [group addArrangedSubview:button];
@@ -679,12 +884,104 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
 
 - (void)startPs3Machine {
     if (self.ps3FirmwareURL == nil) {
-        self.activePs3Machine[@"last_result"] = @"Import PS3UPDAT.PUP before starting the console.";
-        [self savePs3Machines];
-        [self rebuildPs3Screen];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Firmware Required"
+                                                                         message:@"Import PS3UPDAT.PUP before starting this virtual console."
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Import"
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(UIAlertAction *action) {
+            (void)action;
+            [self importPs3Firmware];
+        }]];
+        [self presentViewController:alert animated:YES completion:nil];
         return;
     }
-    [self preparePs3VshBootstrap];
+    self.activePs3Machine[@"status"] = @"Starting";
+    self.activePs3Machine[@"last_result"] = @"Starting PS3 runtime…";
+    [self savePs3Machines];
+
+    VSHiftDisplayViewController *display = [[VSHiftDisplayViewController alloc] init];
+    display.modalPresentationStyle = UIModalPresentationFullScreen;
+    display.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+    display.modalPresentationCapturesStatusBarAppearance = YES;
+    self.displayViewController = display;
+    __block VSHiftJITViewController *blockSelf = self;
+    display.closeHandler = ^{
+        VSHiftJITViewController *strongSelf = blockSelf;
+        strongSelf.displayViewController = nil;
+        [strongSelf rebuildPs3Screen];
+    };
+    display.powerHandler = ^{
+        VSHiftJITViewController *strongSelf = blockSelf;
+        [strongSelf handlePS3RuntimePowerRequest];
+    };
+    display.pauseHandler = ^(BOOL paused) {
+        VSHiftJITViewController *strongSelf = blockSelf;
+        [strongSelf handlePS3RuntimePauseRequest:paused];
+    };
+    [self presentViewController:display animated:YES completion:^{
+        [blockSelf preparePs3VshBootstrap];
+    }];
+}
+
+// Runtime UI contract: call these methods on the controller that owns the console.
+// Frame delivery is marshalled onto the main queue and remains valid while the
+// fullscreen display controller is presented.
+- (void)submitPS3FramebufferImage:(UIImage *)image {
+    [self.displayViewController updateFramebufferImage:image];
+}
+
+- (void)submitPS3FramebufferBGRA8:(const std::uint8_t *)pixels
+                             width:(std::size_t)width
+                            height:(std::size_t)height
+                       bytesPerRow:(std::size_t)bytesPerRow {
+    if (pixels == nullptr || width == 0 || height == 0 ||
+        width > std::numeric_limits<std::size_t>::max() / 4 || bytesPerRow < width * 4 ||
+        height > std::numeric_limits<std::size_t>::max() / bytesPerRow) {
+        return;
+    }
+    const std::size_t byteCount = height * bytesPerRow;
+    if (byteCount > static_cast<std::size_t>(std::numeric_limits<CFIndex>::max())) return;
+    CFDataRef data = CFDataCreate(kCFAllocatorDefault, pixels, static_cast<CFIndex>(byteCount));
+    if (data == nullptr) return;
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGImageRef image = CGImageCreate(width,
+                                     height,
+                                     8,
+                                     32,
+                                     bytesPerRow,
+                                     colorSpace,
+                                     static_cast<CGBitmapInfo>(kCGBitmapByteOrder32Little |
+                                                               kCGImageAlphaPremultipliedFirst),
+                                     provider,
+                                     nullptr,
+                                     false,
+                                     kCGRenderingIntentDefault);
+    if (image != nullptr) {
+        [self submitPS3FramebufferImage:[UIImage imageWithCGImage:image]];
+        CGImageRelease(image);
+    }
+    CGColorSpaceRelease(colorSpace);
+    CGDataProviderRelease(provider);
+    CFRelease(data);
+}
+
+- (void)setPS3DisplayStatus:(NSString *)status {
+    self.statusLabel.text = status;
+    [self.displayViewController updateDisplayStatus:status];
+}
+
+- (void)handlePS3RuntimePowerRequest {
+    self.activePs3Machine[@"status"] = @"Stopped";
+    self.activePs3Machine[@"last_result"] = @"Virtual console powered off.";
+    [self savePs3Machines];
+}
+
+- (void)handlePS3RuntimePauseRequest:(BOOL)paused {
+    self.activePs3Machine[@"status"] = paused ? @"Paused" : @"Running";
+    [self savePs3Machines];
 }
 
 - (void)importPs3Firmware {
@@ -737,7 +1034,7 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
 - (void)preparePs3VshBootstrap {
     NSURL *url = self.ps3FirmwareURL;
     if (url == nil) {
-        self.statusLabel.text = @"Import PS3UPDAT.PUP first.";
+        [self setPS3DisplayStatus:@"Import PS3UPDAT.PUP first."];
         return;
     }
     const BOOL accessed = [url startAccessingSecurityScopedResource];
@@ -746,13 +1043,13 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     std::uint64_t fileSize = fileSizeNumber != nil ? fileSizeNumber.unsignedLongLongValue : 0;
     if (fileSize < vshift::firmware::kPs3PupHeaderSize ||
         fileSize > static_cast<std::uint64_t>(std::numeric_limits<NSUInteger>::max())) {
-        self.statusLabel.text = @"PS3 PUP is too small or too large to read.";
+        [self setPS3DisplayStatus:@"PS3 PUP is too small or too large to read."];
         if (accessed) [url stopAccessingSecurityScopedResource];
         return;
     }
     NSData *pupData = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:nil];
     if (pupData.length != static_cast<NSUInteger>(fileSize)) {
-        self.statusLabel.text = @"Could not read PS3UPDAT.PUP.";
+        [self setPS3DisplayStatus:@"Could not read PS3UPDAT.PUP."];
         if (accessed) [url stopAccessingSecurityScopedResource];
         return;
     }
@@ -760,14 +1057,14 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     const auto headerLength = ReadU64BE(pupBytes + 0x20);
     if (headerLength < vshift::firmware::kPs3PupHeaderSize ||
         headerLength > 16ull * 1024ull * 1024ull || headerLength > fileSize) {
-        self.statusLabel.text = @"PS3 PUP header size is invalid.";
+        [self setPS3DisplayStatus:@"PS3 PUP header size is invalid."];
         if (accessed) [url stopAccessingSecurityScopedResource];
         return;
     }
     const auto parsed = vshift::firmware::ParsePs3PupHeaders(
         std::span<const std::uint8_t>(pupBytes, static_cast<std::size_t>(headerLength)), fileSize);
     if (!parsed.ok()) {
-        self.statusLabel.text = [NSString stringWithFormat:@"PS3 PUP parse failed:\n%s", parsed.error.c_str()];
+        [self setPS3DisplayStatus:[NSString stringWithFormat:@"PS3 PUP parse failed:\n%s", parsed.error.c_str()]];
         if (accessed) [url stopAccessingSecurityScopedResource];
         return;
     }
@@ -777,7 +1074,7 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     if (updateEntry == parsed.entries.end() ||
         updateEntry->data_offset > pupData.length ||
         updateEntry->data_length > pupData.length - static_cast<NSUInteger>(updateEntry->data_offset)) {
-        self.statusLabel.text = @"PS3 PUP has no readable update TAR.";
+        [self setPS3DisplayStatus:@"PS3 PUP has no readable update TAR."];
         if (accessed) [url stopAccessingSecurityScopedResource];
         return;
     }
@@ -785,7 +1082,7 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     const auto updateTar = vshift::firmware::ParsePs3Tar(
         std::span<const std::uint8_t>(updateTarBytes, static_cast<std::size_t>(updateEntry->data_length)));
     if (!updateTar.ok()) {
-        self.statusLabel.text = [NSString stringWithFormat:@"PS3 update TAR parse failed:\n%s", updateTar.error.c_str()];
+        [self setPS3DisplayStatus:[NSString stringWithFormat:@"PS3 update TAR parse failed:\n%s", updateTar.error.c_str()]];
         if (accessed) [url stopAccessingSecurityScopedResource];
         return;
     }
@@ -793,7 +1090,7 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
         return entry.regular_file && entry.name.rfind("dev_flash_012", 0) == 0;
     });
     if (packageEntry == updateTar.entries.end()) {
-        self.statusLabel.text = @"dev_flash_012 package is missing.";
+        [self setPS3DisplayStatus:@"dev_flash_012 package is missing."];
         if (accessed) [url stopAccessingSecurityScopedResource];
         return;
     }
@@ -802,11 +1099,12 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     const auto package = vshift::firmware::DecryptPs3ScePackage(
         std::span<const std::uint8_t>(updateTarBytes + packageBegin, packageLength));
     if (!package.ok()) {
-        self.statusLabel.text = [NSString stringWithFormat:@"dev_flash_012 decrypt failed:\n%s", package.error.c_str()];
+        [self setPS3DisplayStatus:[NSString stringWithFormat:@"dev_flash_012 decrypt failed:\n%s", package.error.c_str()]];
         if (accessed) [url stopAccessingSecurityScopedResource];
         return;
     }
     std::uint64_t vshSize = 0;
+    std::vector<std::uint8_t> vshBytes;
     for (const auto &section : package.sections) {
         const auto candidate = vshift::firmware::ParsePs3Tar(section.bytes);
         if (!candidate.ok()) continue;
@@ -815,13 +1113,88 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
         });
         if (found != candidate.entries.end()) {
             vshSize = found->data_length;
+            if (found->data_offset <= section.bytes.size() &&
+                found->data_length <= section.bytes.size() -
+                    static_cast<std::size_t>(found->data_offset)) {
+                vshBytes.assign(
+                    section.bytes.begin() + static_cast<std::size_t>(found->data_offset),
+                    section.bytes.begin() + static_cast<std::size_t>(
+                        found->data_offset + found->data_length));
+            }
             break;
         }
     }
     if (accessed) [url stopAccessingSecurityScopedResource];
-    if (vshSize == 0) {
-        self.statusLabel.text = @"dev_flash_012 decrypted, but vsh.self was not found.";
+    if (vshSize == 0 || vshBytes.empty()) {
+        [self setPS3DisplayStatus:@"dev_flash_012 decrypted, but vsh.self was not found."];
         return;
+    }
+
+    const auto selfImage = vshift::loader::ParsePs3Self(vshBytes);
+    if (!selfImage.ok()) {
+        [self setPS3DisplayStatus:[NSString stringWithFormat:
+            @"vsh.self parse failed:\n%s", selfImage.error.c_str()]];
+        self.activePs3Machine[@"status"] = @"VSH SELF rejected";
+        self.activePs3Machine[@"last_result"] = [NSString stringWithFormat:
+            @"The real vsh.self was found, but its PS3 SELF loader rejected it: %@",
+            [NSString stringWithUTF8String:selfImage.error.c_str()]];
+        [self savePs3Machines];
+        return;
+    }
+    vshift::memory::GuestMemory guestMemory;
+    const auto loaded = vshift::loader::LoadPs3SelfIntoMemory(
+        selfImage.image, guestMemory);
+    if (!loaded.ok()) {
+        [self setPS3DisplayStatus:[NSString stringWithFormat:
+            @"vsh.self load failed:\n%s", loaded.error.c_str()]];
+        self.activePs3Machine[@"status"] = @"VSH image rejected";
+        self.activePs3Machine[@"last_result"] = [NSString stringWithFormat:
+            @"SELF metadata was decrypted, but the guest loader could not map VSH: %@",
+            [NSString stringWithUTF8String:loaded.error.c_str()]];
+        [self savePs3Machines];
+        return;
+    }
+
+    NSString *ppuReason = @"not started";
+    std::size_t ppuInstructions = 0;
+    std::uint64_t ppuPC = 0;
+    std::uint64_t ppuSyscall = 0;
+    std::array<std::uint8_t, 8> entryDescriptor{};
+    const auto descriptorRead = guestMemory.Read(
+        selfImage.image.entry_point, entryDescriptor);
+    const auto stackMapped = guestMemory.Map({
+        0x0c000000, 0x01000000,
+        vshift::memory::kPermissionRead | vshift::memory::kPermissionWrite});
+    if (descriptorRead.ok() && stackMapped.ok()) {
+        const auto codeAddress = ReadU32BE(entryDescriptor.data());
+        const auto tocAddress = ReadU32BE(entryDescriptor.data() + 4);
+        vshift::cpu::PpuRuntime ppu(guestMemory);
+        ppu.registers().pc = codeAddress;
+        ppu.registers().gpr[1] = 0x0cfff000;
+        ppu.registers().gpr[2] = tocAddress;
+        const auto ppuResult = ppu.Run(100000);
+        ppuInstructions = ppuResult.instructions;
+        ppuPC = ppuResult.registers.pc;
+        ppuSyscall = ppuResult.registers.gpr[11];
+        switch (ppuResult.reason) {
+        case vshift::cpu::PpuStopReason::Syscall:
+            ppuReason = @"LV2 syscall";
+            break;
+        case vshift::cpu::PpuStopReason::StepLimit:
+            ppuReason = @"step limit";
+            break;
+        case vshift::cpu::PpuStopReason::UnsupportedInstruction:
+            ppuReason = @"unsupported PPU instruction";
+            break;
+        case vshift::cpu::PpuStopReason::MemoryFault:
+            ppuReason = @"PPU memory fault";
+            break;
+        case vshift::cpu::PpuStopReason::Halted:
+            ppuReason = @"PPU halted";
+            break;
+        }
+    } else {
+        ppuReason = descriptorRead.ok() ? @"PPU stack map failed" : @"entry descriptor unreadable";
     }
 
     NSString *version = [self machineValue:self.activePs3Machine key:@"firmware_version" fallback:@"unknown"];
@@ -837,22 +1210,44 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
         @"vsh_self": @{
             @"path": @"dev_flash/vsh/module/vsh.self",
             @"size": @(vshSize),
+            @"elf_class": @(selfImage.image.elf_class),
+            @"elf_machine": @(selfImage.image.elf_machine),
+            @"entry_point": @(selfImage.image.entry_point),
+            @"mapped_segments": @(loaded.loaded_segments),
         },
-        @"boot_status": @"dev_flash package decrypted; PPU/LV2/RSX execution pending",
+        @"ppu_attempt": @{
+            @"stop_reason": ppuReason,
+            @"instructions": @(ppuInstructions),
+            @"pc": @(ppuPC),
+            @"syscall": @(ppuSyscall),
+        },
+        @"boot_status": @"PS3 SELF metadata decrypted and PT_LOAD segments mapped; PPU/LV2/RSX execution pending",
     };
     const BOOL manifestSaved = [self writeManifest:manifest error:&manifestError];
-    self.activePs3Machine[@"status"] = @"VSH bootstrap ready";
+    self.activePs3Machine[@"status"] = [NSString stringWithFormat:@"PPU %@", ppuReason];
     self.activePs3Machine[@"vsh_self_size"] = @(vshSize);
+    self.activePs3Machine[@"vsh_entry_point"] = @(selfImage.image.entry_point);
+    self.activePs3Machine[@"vsh_mapped_segments"] = @(loaded.loaded_segments);
     self.activePs3Machine[@"last_result"] = [NSString stringWithFormat:
-        @"VSH bootstrap ready\nFirmware: %@\nPackage: %@\nDecrypted sections: %lu\nvsh.self: %llu bytes\n%@",
+        @"VSH image loaded\nFirmware: %@\nPackage: %@\nDecrypted sections: %lu\nvsh.self: %llu bytes\nELF: %@ PowerPC\nEntry: 0x%llx\nMapped PT_LOAD: %lu\nPPU: %@ after %lu instructions\nPC: 0x%llx · syscall/r11: 0x%llx\n%@",
         version,
         [NSString stringWithUTF8String:packageEntry->name.c_str()],
         static_cast<unsigned long>(package.sections.size()),
         static_cast<unsigned long long>(vshSize),
+        selfImage.image.elf_class == 2 ? @"64-bit big-endian" : @"32-bit big-endian",
+        static_cast<unsigned long long>(selfImage.image.entry_point),
+        static_cast<unsigned long>(loaded.loaded_segments),
+        ppuReason,
+        static_cast<unsigned long>(ppuInstructions),
+        static_cast<unsigned long long>(ppuPC),
+        static_cast<unsigned long long>(ppuSyscall),
         manifestSaved ? @"Next: PPU/LV2/RSX runtime and framebuffer."
                       : [NSString stringWithFormat:@"Manifest save failed: %@", manifestError.localizedDescription ?: @"unknown error"]];
     [self savePs3Machines];
-    [self showPs3Detail];
+    [self setPS3DisplayStatus:[NSString stringWithFormat:
+        @"VSH image loaded\nPPU %@ · syscall/r11 0x%llx\nWaiting for LV2 HLE / RSX framebuffer…",
+        ppuReason, static_cast<unsigned long long>(ppuSyscall)]];
+    if (self.displayViewController == nil) [self showPs3Detail];
 }
 
 - (void)inspectPs3FirmwareAtURL:(NSURL *)url {
@@ -1001,12 +1396,30 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
 @end
 
 @implementation VSHiftAppDelegate
+- (UIInterfaceOrientationMask)application:(UIApplication *)application
+        supportedInterfaceOrientationsForWindow:(UIWindow *)window {
+    (void)application;
+    UIViewController *presented = window.rootViewController.presentedViewController;
+    if ([presented isKindOfClass:VSHiftDisplayViewController.class]) {
+        return UIInterfaceOrientationMaskLandscape;
+    }
+    return UIInterfaceOrientationMaskPortrait;
+}
+
 - (BOOL)application:(UIApplication *)application
     didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     (void)application;
     (void)launchOptions;
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    self.window.rootViewController = [[VSHiftJITViewController alloc] init];
+    VSHiftJITViewController *root = [[VSHiftJITViewController alloc] init];
+    UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:root];
+    navigation.navigationBar.prefersLargeTitles = YES;
+    UINavigationBarAppearance *appearance = [[UINavigationBarAppearance alloc] init];
+    [appearance configureWithDefaultBackground];
+    navigation.navigationBar.standardAppearance = appearance;
+    navigation.navigationBar.scrollEdgeAppearance = appearance;
+    navigation.navigationBar.compactAppearance = appearance;
+    self.window.rootViewController = navigation;
     [self.window makeKeyAndVisible];
     return YES;
 }

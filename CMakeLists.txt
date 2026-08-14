@@ -17,6 +17,7 @@ add_library(vshift_core STATIC
     core/boot/synthetic_boot.cpp
     core/cpu/executable_memory.cpp
     core/cpu/arm64_jit.cpp
+    core/cpu/ppu_runtime.cpp
     core/cpu/ir.cpp
     core/cpu/x86_runtime.cpp
     core/cpu/x86_decoder.cpp
@@ -27,6 +28,7 @@ add_library(vshift_core STATIC
     core/loader/self.cpp
     core/loader/self_loader.cpp
     core/loader/ps3_sce.cpp
+    core/loader/ps3_self.cpp
     core/firmware/catalog.cpp
     core/firmware/vfs.cpp
     core/firmware/slb2.cpp
@@ -92,6 +94,16 @@ if(VSHIFT_BUILD_TESTS)
         tests/ps3_sce_test.cpp
     )
     target_link_libraries(vshift_ps3_sce_test PRIVATE vshift_core)
+
+    add_executable(vshift_ps3_self_test
+        tests/ps3_self_test.cpp
+    )
+    target_link_libraries(vshift_ps3_self_test PRIVATE vshift_core)
+
+    add_executable(vshift_ppu_runtime_test
+        tests/ppu_runtime_test.cpp
+    )
+    target_link_libraries(vshift_ppu_runtime_test PRIVATE vshift_core)
 
     add_executable(vshift_ps3_crypto_test
         tests/ps3_crypto_test.cpp
@@ -161,6 +173,8 @@ if(VSHIFT_BUILD_TESTS)
     add_test(NAME vshift_pup_test COMMAND vshift_pup_test)
     add_test(NAME vshift_ps3_pup_test COMMAND vshift_ps3_pup_test)
     add_test(NAME vshift_ps3_sce_test COMMAND vshift_ps3_sce_test)
+    add_test(NAME vshift_ps3_self_test COMMAND vshift_ps3_self_test)
+    add_test(NAME vshift_ppu_runtime_test COMMAND vshift_ppu_runtime_test)
     add_test(NAME vshift_ps3_crypto_test COMMAND vshift_ps3_crypto_test)
     add_test(NAME vshift_catalog_test COMMAND vshift_catalog_test)
     add_test(NAME vshift_elf_test COMMAND vshift_elf_test)
