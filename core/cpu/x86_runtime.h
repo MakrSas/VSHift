@@ -18,13 +18,21 @@ struct GuestRegisters final {
     std::uint64_t gs_base = 0;
 
     std::uint64_t& rax() noexcept { return general[0]; }
+    const std::uint64_t& rax() const noexcept { return general[0]; }
     std::uint64_t& rcx() noexcept { return general[1]; }
+    const std::uint64_t& rcx() const noexcept { return general[1]; }
     std::uint64_t& rdx() noexcept { return general[2]; }
+    const std::uint64_t& rdx() const noexcept { return general[2]; }
     std::uint64_t& rbx() noexcept { return general[3]; }
+    const std::uint64_t& rbx() const noexcept { return general[3]; }
     std::uint64_t& rsp() noexcept { return general[4]; }
+    const std::uint64_t& rsp() const noexcept { return general[4]; }
     std::uint64_t& rbp() noexcept { return general[5]; }
+    const std::uint64_t& rbp() const noexcept { return general[5]; }
     std::uint64_t& rsi() noexcept { return general[6]; }
+    const std::uint64_t& rsi() const noexcept { return general[6]; }
     std::uint64_t& rdi() noexcept { return general[7]; }
+    const std::uint64_t& rdi() const noexcept { return general[7]; }
 };
 
 struct GuestCpuConfig final {

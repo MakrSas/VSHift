@@ -76,7 +76,7 @@ int main() {
     WriteU64LE(decrypted, 0x10, kFileSize);
     WriteU16LE(decrypted, 0x18, kSegmentCount);
     WriteU16LE(decrypted, 0x1A, 0x32);
-    WriteU32LE(decrypted, 0x440, 0x12020000);
+    WriteU32LE(decrypted, 0x60, 0x12020000);
     WriteU64LE(decrypted, 0x20, 0x0000000000F02000);
     WriteU64LE(decrypted, 0x28, 0x1390);
     WriteU64LE(decrypted, 0x30, 0x1000);

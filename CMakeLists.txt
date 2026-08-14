@@ -23,10 +23,12 @@ add_library(vshift_core STATIC
     core/loader/elf_loader.cpp
     core/loader/self.cpp
     core/loader/self_loader.cpp
+    core/loader/ps3_sce.cpp
     core/firmware/catalog.cpp
     core/firmware/vfs.cpp
     core/firmware/slb2.cpp
     core/firmware/pup.cpp
+    core/firmware/ps3_pup.cpp
     core/hle/kernel.cpp
     core/video/framebuffer.cpp
 )
@@ -73,6 +75,16 @@ if(VSHIFT_BUILD_TESTS)
         tests/pup_test.cpp
     )
     target_link_libraries(vshift_pup_test PRIVATE vshift_core)
+
+    add_executable(vshift_ps3_pup_test
+        tests/ps3_pup_test.cpp
+    )
+    target_link_libraries(vshift_ps3_pup_test PRIVATE vshift_core)
+
+    add_executable(vshift_ps3_sce_test
+        tests/ps3_sce_test.cpp
+    )
+    target_link_libraries(vshift_ps3_sce_test PRIVATE vshift_core)
 
     add_executable(vshift_catalog_test
         tests/catalog_test.cpp
@@ -135,6 +147,8 @@ if(VSHIFT_BUILD_TESTS)
     add_test(NAME vshift_synthetic_boot_test COMMAND vshift_synthetic_boot_test)
     add_test(NAME vshift_slb2_test COMMAND vshift_slb2_test)
     add_test(NAME vshift_pup_test COMMAND vshift_pup_test)
+    add_test(NAME vshift_ps3_pup_test COMMAND vshift_ps3_pup_test)
+    add_test(NAME vshift_ps3_sce_test COMMAND vshift_ps3_sce_test)
     add_test(NAME vshift_catalog_test COMMAND vshift_catalog_test)
     add_test(NAME vshift_elf_test COMMAND vshift_elf_test)
     add_test(NAME vshift_guest_memory_test COMMAND vshift_guest_memory_test)
@@ -152,6 +166,11 @@ add_executable(vshift_firmware_inspect
     tools/firmware_inspect.cpp
 )
 target_link_libraries(vshift_firmware_inspect PRIVATE vshift_core)
+
+add_executable(vshift_ps3_firmware_inspect
+    tools/ps3_firmware_inspect.cpp
+)
+target_link_libraries(vshift_ps3_firmware_inspect PRIVATE vshift_core)
 
 if(VSHIFT_BUILD_IOS)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")

@@ -6,11 +6,13 @@
 #include "core/cpu/arm64_jit.h"
 #include "core/firmware/catalog.h"
 #include "core/firmware/pup.h"
+#include "core/firmware/ps3_pup.h"
 #include "core/firmware/slb2.h"
 #include "core/cpu/x86_decoder.h"
 #include "core/loader/elf_loader.h"
 #include "core/loader/self.h"
 #include "core/loader/self_loader.h"
+#include "core/loader/ps3_sce.h"
 #include "core/memory/guest_memory.h"
 #include "core/video/framebuffer.h"
 
@@ -29,6 +31,7 @@
 @property(nonatomic, strong) NSURL *manifestURL;
 @property(nonatomic, strong) NSURL *firmwareRootURL;
 @property(nonatomic, assign) BOOL pickingDecryptedFirmware;
+@property(nonatomic, assign) BOOL pickingPs3Firmware;
 @property(nonatomic, assign) BOOL pickingFirmwareRoot;
 @property(nonatomic, assign) BOOL pickingFirmwareSelfProbe;
 @property(nonatomic, assign) BOOL pickingRealBoot;
@@ -46,6 +49,14 @@ static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
 static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     return static_cast<std::uint16_t>(bytes[0]) |
            (static_cast<std::uint16_t>(bytes[1]) << 8);
+}
+
+static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
+    std::uint64_t value = 0;
+    for (std::size_t index = 0; index < sizeof(value); ++index) {
+        value = (value << 8) | bytes[index];
+    }
+    return value;
 }
 
 - (void)viewDidLoad {
@@ -160,6 +171,18 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
                    action:@selector(importFirmwareRoot)
          forControlEvents:UIControlEventTouchUpInside];
 
+    UIButtonConfiguration *ps3Configuration =
+        [UIButtonConfiguration tintedButtonConfiguration];
+    ps3Configuration.title = @"Import PS3UPDAT.PUP";
+    ps3Configuration.image = [UIImage systemImageNamed:@"gamecontroller"];
+    ps3Configuration.imagePadding = 8.0;
+    ps3Configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    UIButton *ps3Button = [UIButton buttonWithType:UIButtonTypeSystem];
+    ps3Button.configuration = ps3Configuration;
+    [ps3Button addTarget:self
+                  action:@selector(importPs3Firmware)
+        forControlEvents:UIControlEventTouchUpInside];
+
     UIButtonConfiguration *exportConfiguration =
         [UIButtonConfiguration tintedButtonConfiguration];
     exportConfiguration.title = @"Export manifest to Files";
@@ -178,7 +201,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     firmwareCard.layer.cornerRadius = 24.0;
     firmwareCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
     UIStackView *firmwareStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        firmwareHeader, rootButton,
+        firmwareHeader, ps3Button, rootButton,
         self.exportManifestButton
     ]];
     firmwareStack.axis = UILayoutConstraintAxisVertical;
@@ -294,6 +317,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 
 - (void)importFirmware {
     self.pickingDecryptedFirmware = NO;
+    self.pickingPs3Firmware = NO;
     self.pickingFirmwareRoot = NO;
     self.pickingFirmwareSelfProbe = NO;
     self.pickingRealBoot = NO;
@@ -308,6 +332,22 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 
 - (void)importDecryptedFirmware {
     self.pickingDecryptedFirmware = YES;
+    self.pickingPs3Firmware = NO;
+    self.pickingFirmwareRoot = NO;
+    self.pickingFirmwareSelfProbe = NO;
+    self.pickingRealBoot = NO;
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc]
+            initForOpeningContentTypes:@[UTTypeData]
+                                 asCopy:NO];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)importPs3Firmware {
+    self.pickingDecryptedFirmware = NO;
+    self.pickingPs3Firmware = YES;
     self.pickingFirmwareRoot = NO;
     self.pickingFirmwareSelfProbe = NO;
     self.pickingRealBoot = NO;
@@ -322,6 +362,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 
 - (void)importFirmwareRoot {
     self.pickingDecryptedFirmware = NO;
+    self.pickingPs3Firmware = NO;
     self.pickingFirmwareRoot = YES;
     self.pickingFirmwareSelfProbe = NO;
     self.pickingRealBoot = NO;
@@ -336,6 +377,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 
 - (void)probeFirmwareSelf {
     self.pickingDecryptedFirmware = NO;
+    self.pickingPs3Firmware = NO;
     self.pickingFirmwareRoot = NO;
     self.pickingFirmwareSelfProbe = YES;
     self.pickingRealBoot = NO;
@@ -353,6 +395,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         self.statusLabel.text =
             @"Choose Firmware 5.05 root first. The real boot attempt will then read SceSysCore.elf.";
         self.pickingDecryptedFirmware = NO;
+        self.pickingPs3Firmware = NO;
         self.pickingFirmwareRoot = NO;
         self.pickingFirmwareSelfProbe = NO;
         self.pickingRealBoot = YES;
@@ -823,6 +866,184 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     self.statusLabel.text = summary;
 }
 
+- (void)inspectPs3FirmwareAtURL:(NSURL *)url {
+    const BOOL accessed = [url startAccessingSecurityScopedResource];
+    NSError *attributesError = nil;
+    NSDictionary *attributes =
+        [[NSFileManager defaultManager] attributesOfItemAtPath:url.path
+                                                          error:&attributesError];
+    NSNumber *fileSizeNumber = attributes[NSFileSize];
+    const auto fileSize = fileSizeNumber != nil
+                              ? fileSizeNumber.unsignedLongLongValue
+                              : 0;
+    if (attributesError != nil ||
+        fileSize < vshift::firmware::kPs3PupHeaderSize) {
+        self.statusLabel.text = @"PS3 PUP is too small or unreadable.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    NSFileHandle *handle =
+        [NSFileHandle fileHandleForReadingFromURL:url error:nil];
+    if (handle == nil) {
+        self.statusLabel.text = @"Could not open PS3UPDAT.PUP.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    NSData *fixedHeaderData =
+        [handle readDataOfLength:vshift::firmware::kPs3PupHeaderSize];
+    if (fixedHeaderData.length < vshift::firmware::kPs3PupHeaderSize) {
+        [handle closeFile];
+        self.statusLabel.text = @"Could not read the PS3 PUP header.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    const auto *fixedHeaderBytes =
+        static_cast<const std::uint8_t *>(fixedHeaderData.bytes);
+    const auto headerLength = ReadU64BE(fixedHeaderBytes + 0x20);
+    constexpr std::uint64_t kMaximumPs3HeaderSize = 16ull * 1024ull * 1024ull;
+    if (headerLength < vshift::firmware::kPs3PupHeaderSize ||
+        headerLength > kMaximumPs3HeaderSize || headerLength > fileSize ||
+        headerLength > std::numeric_limits<NSUInteger>::max()) {
+        [handle closeFile];
+        self.statusLabel.text = @"PS3 PUP header size is invalid.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    [handle seekToFileOffset:0];
+    NSData *headerData =
+        [handle readDataOfLength:static_cast<NSUInteger>(headerLength)];
+    if (headerData.length != static_cast<NSUInteger>(headerLength)) {
+        [handle closeFile];
+        self.statusLabel.text = @"Could not read the PS3 PUP tables.";
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    const auto *headerBytes =
+        static_cast<const std::uint8_t *>(headerData.bytes);
+    const auto parsed = vshift::firmware::ParsePs3PupHeaders(
+        std::span<const std::uint8_t>(headerBytes, headerData.length),
+        fileSize);
+    if (!parsed.ok()) {
+        [handle closeFile];
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"PS3 PUP parse failed:\n%s", parsed.error.c_str()];
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    NSMutableArray *entries =
+        [NSMutableArray arrayWithCapacity:parsed.entries.size()];
+    NSMutableArray *sceEntries = [NSMutableArray array];
+    NSString *firmwareVersion = nil;
+    for (const auto &entry : parsed.entries) {
+        NSMutableDictionary *entryManifest = [@{
+            @"id": @(entry.entry_id),
+            @"offset": @(entry.data_offset),
+            @"size": @(entry.data_length),
+        } mutableCopy];
+
+        if (entry.entry_id == 0x100 && entry.data_length != 0) {
+            [handle seekToFileOffset:entry.data_offset];
+            const auto versionLength = static_cast<NSUInteger>(std::min<
+                std::uint64_t>(entry.data_length, 64));
+            NSData *versionData = [handle readDataOfLength:versionLength];
+            firmwareVersion = [[NSString alloc] initWithData:versionData
+                                                     encoding:NSUTF8StringEncoding];
+            if (firmwareVersion != nil) {
+                firmwareVersion = [firmwareVersion
+                    stringByTrimmingCharactersInSet:
+                        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            }
+        }
+
+        if (entry.data_length >= vshift::loader::kPs3SceHeaderSize) {
+            [handle seekToFileOffset:entry.data_offset];
+            NSData *sceData = [handle readDataOfLength:
+                vshift::loader::kPs3SceHeaderSize];
+            if (sceData.length == vshift::loader::kPs3SceHeaderSize) {
+                const auto *sceBytes =
+                    static_cast<const std::uint8_t *>(sceData.bytes);
+                const auto sce = vshift::loader::ParsePs3SceHeader(
+                    std::span<const std::uint8_t>(sceBytes, sceData.length),
+                    entry.data_length);
+                if (sce.ok()) {
+                    entryManifest[@"sce"] = @{
+                        @"header_version": @(sce.header.header_version),
+                        @"flags": @(sce.header.flags),
+                        @"type": @(sce.header.type),
+                        @"metadata_offset": @(sce.header.metadata_offset),
+                        @"header_size": @(sce.header.header_size),
+                        @"payload_size": @(sce.header.payload_size),
+                        @"metadata_encrypted": @(sce.header.metadata_encrypted()),
+                    };
+                    [sceEntries addObject:entryManifest];
+                }
+            }
+        }
+        [entries addObject:entryManifest];
+    }
+    [handle closeFile];
+    if (accessed) {
+        [url stopAccessingSecurityScopedResource];
+    }
+
+    NSDictionary *manifest = @{
+        @"schema_version": @3,
+        @"source_file_name": url.lastPathComponent ?: @"PS3UPDAT.PUP",
+        @"source_kind": @"user-provided PS3 PUP",
+        @"container_format": @"PS3 SCEUF/PUP",
+        @"container_size": @(fileSize),
+        @"pup": @{
+            @"package_version": @(parsed.header.package_version),
+            @"image_version": @(parsed.header.image_version),
+            @"file_count": @(parsed.header.file_count),
+            @"header_length": @(parsed.header.header_length),
+            @"data_length": @(parsed.header.data_length),
+        },
+        @"entries": entries,
+    };
+
+    NSError *manifestError = nil;
+    const BOOL manifestSaved = [self writeManifest:manifest
+                                             error:&manifestError];
+    NSMutableString *summary = [NSMutableString stringWithFormat:
+        @"PS3 PUP OK\n%@\nSize: %llu bytes\nVersion: %@\nEntries: %lu\nSCE packages: %lu",
+        url.lastPathComponent ?: @"PS3UPDAT.PUP",
+        static_cast<unsigned long long>(fileSize),
+        firmwareVersion ?: @"unknown",
+        static_cast<unsigned long>(parsed.entries.size()),
+        static_cast<unsigned long>(sceEntries.count)];
+    for (NSDictionary *entry in sceEntries) {
+        NSDictionary *sce = entry[@"sce"];
+        [summary appendFormat:@"\nSCE 0x%llx: metadata %@",
+            [entry[@"id"] unsignedLongLongValue],
+            [sce[@"metadata_encrypted"] boolValue] ? @"encrypted" : @"plaintext"];
+    }
+    [summary appendFormat:@"\n%@",
+        manifestSaved
+            ? @"Manifest saved. Payload decryption is not attempted."
+            : [NSString stringWithFormat:@"Manifest save failed: %@",
+                manifestError.localizedDescription ?: @"unknown error"]];
+    self.statusLabel.text = summary;
+}
+
 - (void)inspectDecryptedFirmwareAtURL:(NSURL *)url {
     const BOOL accessed = [url startAccessingSecurityScopedResource];
     NSError *attributesError = nil;
@@ -1186,6 +1407,12 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     if (self.pickingDecryptedFirmware) {
         self.pickingDecryptedFirmware = NO;
         [self inspectDecryptedFirmwareAtURL:url];
+        return;
+    }
+
+    if (self.pickingPs3Firmware) {
+        self.pickingPs3Firmware = NO;
+        [self inspectPs3FirmwareAtURL:url];
         return;
     }
 
