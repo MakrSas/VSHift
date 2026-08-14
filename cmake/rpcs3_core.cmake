@@ -87,6 +87,8 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         "# frontend media adapter; keep the core independent of a desktop\n"
         "# FFmpeg installation while the VSH boot path is brought up.\n"
         "add_library(3rdparty_ffmpeg INTERFACE)\n"
+        "target_include_directories(3rdparty_ffmpeg SYSTEM INTERFACE\n"
+        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/include\")\n"
         "target_compile_definitions(3rdparty_ffmpeg INTERFACE VSHIFT_RPCS3_NO_HOST_MEDIA=1)\n\n")
     vshift_patch_rpcs3_cmake_between(
         "${RPCS3_3RDPARTY_CMAKE}" "# CURL" "# MINIUPNP"
