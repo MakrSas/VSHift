@@ -164,9 +164,16 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     endforeach()
     foreach(RPCS3_NETWORK_SOURCE IN ITEMS
         "NP/clans_client.cpp"
-        "NP/np_requests.cpp"
         "Cell/Modules/sceNpClans.cpp")
         string(REPLACE "    ${RPCS3_NETWORK_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+    endforeach()
+    foreach(RPCS3_MEDIA_SOURCE IN ITEMS
+        "../util/media_utils.cpp"
+        "Cell/Modules/cellAtracXdec.cpp"
+        "Cell/Modules/cellVdec.cpp"
+        "Cell/Modules/cellVpost.cpp"
+        "RSX/rsx_utils.cpp")
+        string(REPLACE "    ${RPCS3_MEDIA_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     endforeach()
     string(REPLACE
         "    Cell/Modules/cellMic.cpp\n"
@@ -183,6 +190,10 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     string(REPLACE
         "if(NOT ANDROID AND NOT APPLE)"
         "if(NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"
+        RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+    string(REPLACE
+        "if(CMAKE_SYSTEM_PROCESSOR MATCHES \"ARM64|arm64|aarch64\")"
+        "if(CMAKE_SYSTEM_PROCESSOR MATCHES \"ARM64|arm64|aarch64\" OR CMAKE_SYSTEM_NAME STREQUAL \"iOS\")"
         RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     file(WRITE "${RPCS3_EMU_CMAKE}" "${RPCS3_EMU_TEXT}")
 endif()
@@ -394,6 +405,13 @@ target_sources(rpcs3_emu PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/rpcs3_version.cpp")
 target_sources(rpcs3_emu PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/core/ps3/rpcs3_usb_stub.cpp")
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources(rpcs3_emu PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/app/ios/rpcs3_ios_input_bridge.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Input/product_info.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Input/ps_move_config.cpp")
+    target_link_libraries(rpcs3_emu PUBLIC iconv)
+endif()
 
 add_library(vshift_ps3_core STATIC
     "${CMAKE_CURRENT_SOURCE_DIR}/core/ps3/rpcs3_core.cpp")
