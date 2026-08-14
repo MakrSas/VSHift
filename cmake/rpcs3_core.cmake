@@ -9,6 +9,11 @@ endif()
 # provides the iOS presentation/input/audio callbacks.
 enable_language(C)
 
+# The upstream root project sets this while entering its own CMake tree. We
+# enter at the 3rdparty/Emu boundary instead, so provide the same value for
+# dependencies which test it during configure.
+set(CMAKE_MINIMUM_REQUIRED_VERSION 3.28)
+
 set(USE_NATIVE_INSTRUCTIONS OFF CACHE BOOL "" FORCE)
 set(USE_LTO OFF CACHE BOOL "" FORCE)
 set(USE_VULKAN OFF CACHE BOOL "" FORCE)
