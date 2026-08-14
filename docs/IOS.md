@@ -33,7 +33,14 @@ On `main`, the `Import extracted PS4 firmware root` button is the active VSH
 path. It expects `system/sys/SceSysCore.elf`, the required libraries under
 `system/common/lib/`, and reports `system/vsh/SceShellCore.elf`, `system_ex/`,
 and `preinst/` when present. The probe checks this layout and writes a
-preflight result to the manifest; it does not yet execute the guest.
+preflight result to the manifest.
+
+After importing the root, tap `Launch PS4 screen` to open the first visible
+PS4 VSHift screen. It uses the selected root and reports the real
+`SceShellCore` file size in the screen header. This is the first HLE/display
+milestone: it is not yet execution of Sony's protected SELF payload. The
+`Probe real PS4 SELF headers` button remains available for the lower-level
+SELF/ELF report.
 
 The paused `ps5` branch retains the PS5 root preflight and decrypted-PUP
 inspection path.
@@ -46,7 +53,7 @@ The probe also has two synthetic boot buttons. `Run synthetic boot (JIT)` and
 `Run synthetic boot (JIT-less)` load a bundled firmware-independent ELF fixture,
 map its `PT_LOAD`, and execute the guest `mov/add/ret` entry. A successful
 result is `BOOT OK` with result `42`; this validates the loader/runtime path but
-is not a claim that real PS5 VSH has booted.
+is not a claim that the original PS4 VSH guest has booted.
 
 SideStore is a valid alternative for signing/installing and JIT activation,
 but it is not required for the first proof.

@@ -5,8 +5,8 @@ Date: 2026-08-14
 ## Current milestone
 
 Milestones 0 and 1 are complete: the JIT PoC returned `42` on the user's
-iPhone 15. Milestone 2a now has on-device SLB2 inspection, decrypted-PUP
-segment discovery, and metadata-only SELF/ELF mapping.
+iPhone 15. The active PS4 line now accepts the extracted 5.05 root, maps
+real PS4 SELF/ELF metadata, and has a first visible VSHift screen output.
 
 ## Working
 
@@ -59,11 +59,16 @@ segment discovery, and metadata-only SELF/ELF mapping.
 - Added a local helper that expands the already decrypted PUP entries and
   preserves the user-provided exFAT system images for a separate filesystem
   extraction step.
+- Added PS4 SELF magic/platform dispatch and a real-root SELF probe for
+  `SceSysCore.elf` and `SceShellCore.elf`.
+- Added `Launch PS4 screen`, a root-backed iOS 26-style HLE/display surface
+  showing the first visible PS4 VSHift frame.
 
 ## Not working yet
 
-- No PS5 SELF payload decryption or executable real-firmware segment source.
-- No guest execution from the extracted PS5 root yet.
+- No PS4 SELF payload decryption or executable real-firmware segment source.
+- No guest execution from the extracted PS4 root yet; the current screen is an
+  HLE/display surface backed by validated root metadata.
 - No file-backed guest VFS or filesystem-image mounting inside the iOS app.
 - No block cache, HLE, GPU, audio, or input.
 - The local 12.02 test root has been extracted from user-provided firmware;
@@ -77,10 +82,10 @@ validate the executable-memory/signing path before larger CPU work starts.
 
 ## Next 5 actions
 
-1. Download the new device IPA and update the existing installation with
+1. Download the latest device IPA and update the existing installation with
    iLoader.
-2. Import the extracted firmware root on iOS and run Safe Mode preflight.
-3. Implement a file-backed guest VFS and bounded SELF payload source.
+2. Import the extracted firmware root on iOS and tap `Launch PS4 screen`.
+3. Implement a file-backed guest VFS and bounded PS4 SELF payload source.
 4. Add more IR operations and a guest register/flags model while keeping the firmware parser
    independent from CPU execution.
 5. Add a JIT-less IR interpreter for firmware and CPU experiments without
@@ -101,6 +106,7 @@ ctest --test-dir build --output-on-failure -C Release
   provides the required host and Apple toolchains.
 - iOS JIT execution depends on a valid signed entitlement and the user's
   sideload/JIT activation path.
-- Actual PS5 VSH boot still requires file-backed guest VFS, SELF payload
-  decryption/mapping, PS5 ABI/HLE, runtime linking, GPU, and input/audio work;
-  no claim of VSH support is made yet.
+- Actual PS4 VSH guest boot still requires file-backed guest VFS, SELF payload
+  decryption/mapping, PS4 ABI/HLE, runtime linking, GPU, and input/audio work;
+  the current visible screen is explicitly a display milestone, not a claim
+  that Sony's VSH code is executing.
