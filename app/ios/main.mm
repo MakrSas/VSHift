@@ -1,89 +1,116 @@
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-#include "core/boot/synthetic_boot.h"
-#include "core/boot/ps4_boot.h"
-#include "core/cpu/arm64_jit.h"
-#include "core/firmware/catalog.h"
-#include "core/firmware/pup.h"
-#include "core/firmware/slb2.h"
-#include "core/cpu/x86_decoder.h"
-#include "core/loader/elf_loader.h"
-#include "core/loader/self.h"
-#include "core/loader/self_loader.h"
-#include "core/memory/guest_memory.h"
-#include "core/video/framebuffer.h"
+#include "core/frontend/media_store.h"
+#include "core/ps3/firmware_installer.h"
+#include "core/ps3/rpcs3_core.h"
 
-#include <algorithm>
-#include <cstdint>
-#include <limits>
+#include <filesystem>
+#include <memory>
 #include <string>
-#include <string_view>
-#include <vector>
 
-@interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate>
+namespace {
+
+NSString *StringFromUTF8(const std::string &value) {
+    return [NSString stringWithUTF8String:value.c_str()] ?: @"";
+}
+
+NSString *MediaKindName(vshift::frontend::MediaKind kind) {
+    switch (kind) {
+    case vshift::frontend::MediaKind::Music:
+        return @"music";
+    case vshift::frontend::MediaKind::Photo:
+        return @"photo";
+    case vshift::frontend::MediaKind::Video:
+        return @"video";
+    case vshift::frontend::MediaKind::Unknown:
+        return @"USB/imported";
+    }
+    return @"file";
+}
+
+} // namespace
+
+typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
+    VSHiftPickerModeFirmware = 1,
+    VSHiftPickerModeMedia = 2,
+    VSHiftPickerModeIso = 3,
+};
+
+@interface VSHiftViewController : UIViewController <UIDocumentPickerDelegate> {
+    std::unique_ptr<vshift::ps3::Rpcs3Core> _core;
+}
+
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UILabel *guestFrameStateLabel;
 @property(nonatomic, strong) UIImageView *guestFrameView;
-@property(nonatomic, strong) UIButton *exportManifestButton;
-@property(nonatomic, strong) NSURL *manifestURL;
-@property(nonatomic, strong) NSURL *firmwareRootURL;
-@property(nonatomic, assign) BOOL pickingDecryptedFirmware;
-@property(nonatomic, assign) BOOL pickingFirmwareRoot;
-@property(nonatomic, assign) BOOL pickingFirmwareSelfProbe;
-@property(nonatomic, assign) BOOL pickingRealBoot;
+@property(nonatomic, strong) UIButton *startButton;
+@property(nonatomic, strong) UIButton *drawerButton;
+@property(nonatomic, strong) UIView *controlDrawer;
+@property(nonatomic, strong) NSURL *workspaceURL;
+@property(nonatomic, assign) VSHiftPickerMode pickerMode;
+@property(nonatomic, assign) BOOL drawerOpen;
+@property(nonatomic, assign) BOOL fullscreen;
+
 @end
 
-@implementation VSHiftJITViewController
+@implementation VSHiftViewController
 
-static std::uint32_t ReadU32LE(const std::uint8_t *bytes) {
-    return static_cast<std::uint32_t>(bytes[0]) |
-           (static_cast<std::uint32_t>(bytes[1]) << 8) |
-           (static_cast<std::uint32_t>(bytes[2]) << 16) |
-           (static_cast<std::uint32_t>(bytes[3]) << 24);
+- (UIButton *)buttonWithTitle:(NSString *)title
+                         image:(NSString *)imageName
+                         action:(SEL)action
+                          tinted:(BOOL)tinted {
+    UIButtonConfiguration *configuration = tinted
+        ? [UIButtonConfiguration tintedButtonConfiguration]
+        : [UIButtonConfiguration filledButtonConfiguration];
+    configuration.title = title;
+    configuration.image = [UIImage systemImageNamed:imageName];
+    configuration.imagePadding = 8.0;
+    configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.configuration = configuration;
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
 }
 
-static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
-    return static_cast<std::uint16_t>(bytes[0]) |
-           (static_cast<std::uint16_t>(bytes[1]) << 8);
+- (UIView *)card {
+    UIView *view = [[UIView alloc] init];
+    view.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    view.layer.cornerRadius = 24.0;
+    view.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
+    return view;
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-
-    NSString *message =
-        @"PS4 VSH root is manual. Choose an extracted root, then run the boot test.";
-
-    self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.view.backgroundColor = UIColor.systemBackgroundColor;
 
     UIScrollView *scrollView = [[UIScrollView alloc] init];
     scrollView.translatesAutoresizingMaskIntoConstraints = NO;
     scrollView.alwaysBounceVertical = YES;
-    scrollView.showsVerticalScrollIndicator = NO;
     [self.view addSubview:scrollView];
 
     UIStackView *content = [[UIStackView alloc] init];
     content.translatesAutoresizingMaskIntoConstraints = NO;
     content.axis = UILayoutConstraintAxisVertical;
-    content.spacing = 20.0;
-    content.layoutMargins = UIEdgeInsetsMake(24.0, 20.0, 32.0, 20.0);
+    content.spacing = 16.0;
+    content.layoutMargins = UIEdgeInsetsMake(20.0, 16.0, 28.0, 16.0);
     content.layoutMarginsRelativeArrangement = YES;
     [scrollView addSubview:content];
 
     UILabel *eyebrow = [[UILabel alloc] init];
-    eyebrow.text = @"VSHIFT LAB";
+    eyebrow.text = @"VSHIFT LAB · PS3";
     eyebrow.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
     eyebrow.textColor = UIColor.secondaryLabelColor;
-    eyebrow.adjustsFontForContentSizeCategory = YES;
 
     UILabel *title = [[UILabel alloc] init];
-    title.text = @"PS4 firmware workspace";
+    title.text = @"PS3 VSH workspace";
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle];
-    title.textColor = UIColor.labelColor;
     title.adjustsFontForContentSizeCategory = YES;
 
     UILabel *subtitle = [[UILabel alloc] init];
-    subtitle.text = @"Validate an extracted PS4 firmware root and VSH boot path.";
+    subtitle.text = @"Install a user-provided PS3UPDAT.PUP, start the real RPCS3 VSH path, and manage its virtual storage.";
     subtitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
     subtitle.textColor = UIColor.secondaryLabelColor;
     subtitle.numberOfLines = 0;
@@ -95,21 +122,16 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     header.axis = UILayoutConstraintAxisVertical;
     header.spacing = 4.0;
 
-    UIView *statusCard = [[UIView alloc] init];
-    statusCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    statusCard.layer.cornerRadius = 24.0;
-    statusCard.layoutMargins = UIEdgeInsetsMake(18.0, 18.0, 18.0, 18.0);
-
+    UIView *statusCard = [self card];
     UILabel *statusTitle = [[UILabel alloc] init];
     statusTitle.text = @"Runtime status";
     statusTitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-    statusTitle.adjustsFontForContentSizeCategory = YES;
 
     self.statusLabel = [[UILabel alloc] init];
-    self.statusLabel.text = message;
-    self.statusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    self.statusLabel.text = @"PS3 firmware is not installed yet.";
     self.statusLabel.textColor = UIColor.secondaryLabelColor;
     self.statusLabel.numberOfLines = 0;
+    self.statusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     self.statusLabel.adjustsFontForContentSizeCategory = YES;
 
     UIStackView *statusStack = [[UIStackView alloc] initWithArrangedSubviews:@[
@@ -124,140 +146,96 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     displayCard.backgroundColor = UIColor.blackColor;
     displayCard.layer.cornerRadius = 24.0;
     displayCard.clipsToBounds = YES;
-    displayCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
 
     self.guestFrameView = [[UIImageView alloc] init];
     self.guestFrameView.translatesAutoresizingMaskIntoConstraints = NO;
     self.guestFrameView.contentMode = UIViewContentModeScaleAspectFit;
     self.guestFrameView.hidden = YES;
-    self.guestFrameView.accessibilityLabel = @"Guest framebuffer";
+    [displayCard addSubview:self.guestFrameView];
 
     self.guestFrameStateLabel = [[UILabel alloc] init];
-    self.guestFrameStateLabel.text = @"Waiting for guest video output";
+    self.guestFrameStateLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.guestFrameStateLabel.text = @"Real PS3 RSX frame is not connected yet\nNo synthetic XMB is shown";
     self.guestFrameStateLabel.textColor = UIColor.whiteColor;
     self.guestFrameStateLabel.textAlignment = NSTextAlignmentCenter;
     self.guestFrameStateLabel.numberOfLines = 0;
-    self.guestFrameStateLabel.translatesAutoresizingMaskIntoConstraints = NO;
-
-    [displayCard addSubview:self.guestFrameView];
+    self.guestFrameStateLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     [displayCard addSubview:self.guestFrameStateLabel];
 
+    self.drawerButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.drawerButton.translatesAutoresizingMaskIntoConstraints = NO;
+    self.drawerButton.tintColor = UIColor.whiteColor;
+    self.drawerButton.backgroundColor = [UIColor colorWithWhite:0.18 alpha:0.92];
+    self.drawerButton.layer.cornerRadius = 22.0;
+    [self.drawerButton setImage:[UIImage systemImageNamed:@"chevron.left"] forState:UIControlStateNormal];
+    [self.drawerButton addTarget:self action:@selector(toggleDrawer) forControlEvents:UIControlEventTouchUpInside];
+    [displayCard addSubview:self.drawerButton];
+
+    self.controlDrawer = [[UIView alloc] init];
+    self.controlDrawer.translatesAutoresizingMaskIntoConstraints = NO;
+    self.controlDrawer.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.96];
+    self.controlDrawer.layer.cornerRadius = 20.0;
+    self.controlDrawer.hidden = YES;
+    [displayCard addSubview:self.controlDrawer];
+
+    UILabel *drawerTitle = [[UILabel alloc] init];
+    drawerTitle.text = @"Console actions";
+    drawerTitle.textColor = UIColor.whiteColor;
+    drawerTitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    UIButton *pause = [self buttonWithTitle:@"Pause / resume" image:@"pause.circle" action:@selector(togglePause) tinted:YES];
+    UIButton *drawerMedia = [self buttonWithTitle:@"Import media" image:@"square.and.arrow.down" action:@selector(importMedia) tinted:YES];
+    UIButton *drawerIso = [self buttonWithTitle:@"Mount ISO" image:@"opticaldisc" action:@selector(mountISO) tinted:YES];
+    UIButton *drawerSettings = [self buttonWithTitle:@"Console settings" image:@"slider.horizontal.3" action:@selector(openSettings) tinted:YES];
+    UIStackView *drawerStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        drawerTitle, pause, drawerMedia, drawerIso, drawerSettings
+    ]];
+    drawerStack.translatesAutoresizingMaskIntoConstraints = NO;
+    drawerStack.axis = UILayoutConstraintAxisVertical;
+    drawerStack.spacing = 10.0;
+    [self.controlDrawer addSubview:drawerStack];
+
+    UIView *firmwareCard = [self card];
     UILabel *firmwareHeader = [[UILabel alloc] init];
     firmwareHeader.text = @"FIRMWARE";
     firmwareHeader.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
     firmwareHeader.textColor = UIColor.secondaryLabelColor;
-    firmwareHeader.adjustsFontForContentSizeCategory = YES;
-
-    UIButtonConfiguration *rootConfiguration =
-        [UIButtonConfiguration filledButtonConfiguration];
-    rootConfiguration.title = @"Import extracted PS4 firmware root";
-    rootConfiguration.image = [UIImage systemImageNamed:@"folder.badge.gearshape"];
-    rootConfiguration.imagePadding = 8.0;
-    rootConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    UIButton *rootButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    rootButton.configuration = rootConfiguration;
-    [rootButton addTarget:self
-                   action:@selector(importFirmwareRoot)
-         forControlEvents:UIControlEventTouchUpInside];
-
-    UIButtonConfiguration *exportConfiguration =
-        [UIButtonConfiguration tintedButtonConfiguration];
-    exportConfiguration.title = @"Export manifest to Files";
-    exportConfiguration.image = [UIImage systemImageNamed:@"square.and.arrow.up"];
-    exportConfiguration.imagePadding = 8.0;
-    exportConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    self.exportManifestButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.exportManifestButton.configuration = exportConfiguration;
-    self.exportManifestButton.enabled = NO;
-    [self.exportManifestButton addTarget:self
-                                  action:@selector(exportManifest)
-                        forControlEvents:UIControlEventTouchUpInside];
-
-    UIView *firmwareCard = [[UIView alloc] init];
-    firmwareCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    firmwareCard.layer.cornerRadius = 24.0;
-    firmwareCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
+    UIButton *importFirmware = [self buttonWithTitle:@"Import PS3UPDAT.PUP and install" image:@"shippingbox" action:@selector(importFirmware) tinted:NO];
+    self.startButton = [self buttonWithTitle:@"Start real PS3 VSH" image:@"play.fill" action:@selector(startVSH) tinted:NO];
+    self.startButton.enabled = NO;
+    UIButton *stopButton = [self buttonWithTitle:@"Stop emulator" image:@"stop.fill" action:@selector(stopVSH) tinted:YES];
     UIStackView *firmwareStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        firmwareHeader, rootButton,
-        self.exportManifestButton
+        firmwareHeader, importFirmware, self.startButton, stopButton
     ]];
-    firmwareStack.axis = UILayoutConstraintAxisVertical;
-    firmwareStack.spacing = 12.0;
     firmwareStack.translatesAutoresizingMaskIntoConstraints = NO;
+    firmwareStack.axis = UILayoutConstraintAxisVertical;
+    firmwareStack.spacing = 10.0;
     [firmwareCard addSubview:firmwareStack];
 
-    UILabel *bootHeader = [[UILabel alloc] init];
-    bootHeader.text = @"BOOT LAB";
-    bootHeader.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
-    bootHeader.textColor = UIColor.secondaryLabelColor;
-    bootHeader.adjustsFontForContentSizeCategory = YES;
-
-    UIButtonConfiguration *jitConfiguration =
-        [UIButtonConfiguration filledButtonConfiguration];
-    jitConfiguration.title = @"Run synthetic boot · JIT";
-    jitConfiguration.image = [UIImage systemImageNamed:@"bolt.fill"];
-    jitConfiguration.imagePadding = 8.0;
-    jitConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    UIButton *syntheticJitButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    syntheticJitButton.configuration = jitConfiguration;
-    [syntheticJitButton addTarget:self
-                           action:@selector(runSyntheticJit)
-                 forControlEvents:UIControlEventTouchUpInside];
-
-    UIButtonConfiguration *jitLessConfiguration =
-        [UIButtonConfiguration grayButtonConfiguration];
-    jitLessConfiguration.title = @"Run synthetic boot · JIT-less";
-    jitLessConfiguration.image = [UIImage systemImageNamed:@"gauge.with.dots.needle.33percent"];
-    jitLessConfiguration.imagePadding = 8.0;
-    jitLessConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    UIButton *syntheticJitLessButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    syntheticJitLessButton.configuration = jitLessConfiguration;
-    [syntheticJitLessButton addTarget:self
-                               action:@selector(runSyntheticJitLess)
-                     forControlEvents:UIControlEventTouchUpInside];
-
-    UIButtonConfiguration *selfProbeConfiguration =
-        [UIButtonConfiguration tintedButtonConfiguration];
-    selfProbeConfiguration.title = @"Probe real PS4 SELF headers";
-    selfProbeConfiguration.image = [UIImage systemImageNamed:@"doc.text.magnifyingglass"];
-    selfProbeConfiguration.imagePadding = 8.0;
-    selfProbeConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    UIButton *selfProbeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    selfProbeButton.configuration = selfProbeConfiguration;
-    [selfProbeButton addTarget:self
-                        action:@selector(probeFirmwareSelf)
-              forControlEvents:UIControlEventTouchUpInside];
-
-    UIButtonConfiguration *realBootConfiguration =
-        [UIButtonConfiguration filledButtonConfiguration];
-    realBootConfiguration.title = @"Attempt real PS4 boot";
-    realBootConfiguration.image = [UIImage systemImageNamed:@"play.tv"];
-    realBootConfiguration.imagePadding = 8.0;
-    realBootConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    UIButton *realBootButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    realBootButton.configuration = realBootConfiguration;
-    [realBootButton addTarget:self
-                       action:@selector(attemptRealPS4Boot)
-             forControlEvents:UIControlEventTouchUpInside];
-
-    UIView *bootCard = [[UIView alloc] init];
-    bootCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    bootCard.layer.cornerRadius = 24.0;
-    bootCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
-    UIStackView *bootStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        bootHeader, realBootButton, selfProbeButton,
-        syntheticJitButton, syntheticJitLessButton
+    UIView *storageCard = [self card];
+    UILabel *storageHeader = [[UILabel alloc] init];
+    storageHeader.text = @"VIRTUAL STORAGE";
+    storageHeader.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
+    storageHeader.textColor = UIColor.secondaryLabelColor;
+    UIButton *mediaButton = [self buttonWithTitle:@"Import music / photos / video" image:@"photo.on.rectangle" action:@selector(importMedia) tinted:YES];
+    UIButton *isoButton = [self buttonWithTitle:@"Mount PS3 ISO" image:@"opticaldisc" action:@selector(mountISO) tinted:YES];
+    UILabel *storageNote = [[UILabel alloc] init];
+    storageNote.text = @"Files are copied into the sandbox-backed dev_hdd0 or dev_usb000 layout. ISO insertion uses RPCS3's disc path when VSH is running.";
+    storageNote.textColor = UIColor.secondaryLabelColor;
+    storageNote.numberOfLines = 0;
+    storageNote.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    UIStackView *storageStack = [[UIStackView alloc] initWithArrangedSubviews:@[
+        storageHeader, mediaButton, isoButton, storageNote
     ]];
-    bootStack.axis = UILayoutConstraintAxisVertical;
-    bootStack.spacing = 12.0;
-    bootStack.translatesAutoresizingMaskIntoConstraints = NO;
-    [bootCard addSubview:bootStack];
+    storageStack.translatesAutoresizingMaskIntoConstraints = NO;
+    storageStack.axis = UILayoutConstraintAxisVertical;
+    storageStack.spacing = 10.0;
+    [storageCard addSubview:storageStack];
 
     [content addArrangedSubview:header];
     [content addArrangedSubview:statusCard];
     [content addArrangedSubview:displayCard];
     [content addArrangedSubview:firmwareCard];
-    [content addArrangedSubview:bootCard];
+    [content addArrangedSubview:storageCard];
 
     [NSLayoutConstraint activateConstraints:@[
         [scrollView.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
@@ -273,1146 +251,340 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         [statusStack.trailingAnchor constraintEqualToAnchor:statusCard.layoutMarginsGuide.trailingAnchor],
         [statusStack.topAnchor constraintEqualToAnchor:statusCard.layoutMarginsGuide.topAnchor],
         [statusStack.bottomAnchor constraintEqualToAnchor:statusCard.layoutMarginsGuide.bottomAnchor],
-        [displayCard.heightAnchor constraintEqualToConstant:220.0],
-        [self.guestFrameView.leadingAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.leadingAnchor],
-        [self.guestFrameView.trailingAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.trailingAnchor],
-        [self.guestFrameView.topAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.topAnchor],
-        [self.guestFrameView.bottomAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.bottomAnchor],
-        [self.guestFrameStateLabel.leadingAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.leadingAnchor],
-        [self.guestFrameStateLabel.trailingAnchor constraintEqualToAnchor:displayCard.layoutMarginsGuide.trailingAnchor],
+        [displayCard.heightAnchor constraintEqualToConstant:260.0],
+        [self.guestFrameView.leadingAnchor constraintEqualToAnchor:displayCard.leadingAnchor],
+        [self.guestFrameView.trailingAnchor constraintEqualToAnchor:displayCard.trailingAnchor],
+        [self.guestFrameView.topAnchor constraintEqualToAnchor:displayCard.topAnchor],
+        [self.guestFrameView.bottomAnchor constraintEqualToAnchor:displayCard.bottomAnchor],
+        [self.guestFrameStateLabel.leadingAnchor constraintEqualToAnchor:displayCard.leadingAnchor constant:20.0],
+        [self.guestFrameStateLabel.trailingAnchor constraintEqualToAnchor:displayCard.trailingAnchor constant:-20.0],
         [self.guestFrameStateLabel.centerYAnchor constraintEqualToAnchor:displayCard.centerYAnchor],
+        [self.drawerButton.trailingAnchor constraintEqualToAnchor:displayCard.trailingAnchor constant:-12.0],
+        [self.drawerButton.centerYAnchor constraintEqualToAnchor:displayCard.centerYAnchor],
+        [self.drawerButton.widthAnchor constraintEqualToConstant:44.0],
+        [self.drawerButton.heightAnchor constraintEqualToConstant:44.0],
+        [self.controlDrawer.trailingAnchor constraintEqualToAnchor:displayCard.trailingAnchor constant:-8.0],
+        [self.controlDrawer.topAnchor constraintEqualToAnchor:displayCard.topAnchor constant:8.0],
+        [self.controlDrawer.bottomAnchor constraintEqualToAnchor:displayCard.bottomAnchor constant:-8.0],
+        [self.controlDrawer.widthAnchor constraintEqualToConstant:228.0],
+        [drawerStack.leadingAnchor constraintEqualToAnchor:self.controlDrawer.leadingAnchor constant:12.0],
+        [drawerStack.trailingAnchor constraintEqualToAnchor:self.controlDrawer.trailingAnchor constant:-12.0],
+        [drawerStack.topAnchor constraintEqualToAnchor:self.controlDrawer.topAnchor constant:12.0],
+        [drawerStack.bottomAnchor constraintLessThanOrEqualToAnchor:self.controlDrawer.bottomAnchor constant:-12.0],
         [firmwareStack.leadingAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.leadingAnchor],
         [firmwareStack.trailingAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.trailingAnchor],
         [firmwareStack.topAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.topAnchor],
         [firmwareStack.bottomAnchor constraintEqualToAnchor:firmwareCard.layoutMarginsGuide.bottomAnchor],
-        [bootStack.leadingAnchor constraintEqualToAnchor:bootCard.layoutMarginsGuide.leadingAnchor],
-        [bootStack.trailingAnchor constraintEqualToAnchor:bootCard.layoutMarginsGuide.trailingAnchor],
-        [bootStack.topAnchor constraintEqualToAnchor:bootCard.layoutMarginsGuide.topAnchor],
-        [bootStack.bottomAnchor constraintEqualToAnchor:bootCard.layoutMarginsGuide.bottomAnchor],
+        [storageStack.leadingAnchor constraintEqualToAnchor:storageCard.layoutMarginsGuide.leadingAnchor],
+        [storageStack.trailingAnchor constraintEqualToAnchor:storageCard.layoutMarginsGuide.trailingAnchor],
+        [storageStack.topAnchor constraintEqualToAnchor:storageCard.layoutMarginsGuide.topAnchor],
+        [storageStack.bottomAnchor constraintEqualToAnchor:storageCard.layoutMarginsGuide.bottomAnchor],
     ]];
+
+    NSError *workspaceError = nil;
+    self.workspaceURL = [self createWorkspace:&workspaceError];
+    if (!self.workspaceURL) {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"Could not prepare PS3 storage: %@", workspaceError.localizedDescription ?: @"unknown error"];
+    } else {
+        [self refreshFirmwareState];
+    }
+}
+
+- (NSURL *)createWorkspace:(NSError **)error {
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSURL *applicationSupport = [fileManager URLForDirectory:NSApplicationSupportDirectory
+                                                    inDomain:NSUserDomainMask
+                                           appropriateForURL:nil
+                                                      create:YES
+                                                       error:error];
+    if (!applicationSupport) {
+        return nil;
+    }
+    NSURL *workspace = [applicationSupport URLByAppendingPathComponent:@"VSHift/PS3"
+                                                              isDirectory:YES];
+    if (![fileManager createDirectoryAtURL:workspace
+               withIntermediateDirectories:YES
+                                attributes:nil
+                                     error:error]) {
+        return nil;
+    }
+    return workspace;
+}
+
+- (void)refreshFirmwareState {
+    if (!self.workspaceURL) {
+        return;
+    }
+    NSURL *vshURL = [self.workspaceURL URLByAppendingPathComponent:@"dev_flash/vsh/module/vsh.self"];
+    BOOL installed = [[NSFileManager defaultManager] fileExistsAtPath:vshURL.path];
+    self.startButton.enabled = installed && _core == nullptr;
+    if (installed && _core == nullptr) {
+        self.statusLabel.text = @"PS3 dev_flash is installed. The real VSH boot is ready to try.";
+    }
+}
+
+- (void)presentPicker:(VSHiftPickerMode)mode {
+    self.pickerMode = mode;
+    NSArray<UTType *> *types = nil;
+    if (mode == VSHiftPickerModeMedia) {
+        types = @[ UTType.audio, UTType.image, UTType.movie, UTType.data ];
+    } else {
+        types = @[ UTType.data ];
+    }
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:NO];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
 }
 
 - (void)importFirmware {
-    self.pickingDecryptedFirmware = NO;
-    self.pickingFirmwareRoot = NO;
-    self.pickingFirmwareSelfProbe = NO;
-    self.pickingRealBoot = NO;
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc]
-            initForOpeningContentTypes:@[UTTypeData]
-            asCopy:NO];
-    picker.delegate = self;
-    picker.allowsMultipleSelection = NO;
-    [self presentViewController:picker animated:YES completion:nil];
+    [self presentPicker:VSHiftPickerModeFirmware];
 }
 
-- (void)importDecryptedFirmware {
-    self.pickingDecryptedFirmware = YES;
-    self.pickingFirmwareRoot = NO;
-    self.pickingFirmwareSelfProbe = NO;
-    self.pickingRealBoot = NO;
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc]
-            initForOpeningContentTypes:@[UTTypeData]
-                                 asCopy:NO];
-    picker.delegate = self;
-    picker.allowsMultipleSelection = NO;
-    [self presentViewController:picker animated:YES completion:nil];
+- (void)importMedia {
+    [self presentPicker:VSHiftPickerModeMedia];
 }
 
-- (void)importFirmwareRoot {
-    self.pickingDecryptedFirmware = NO;
-    self.pickingFirmwareRoot = YES;
-    self.pickingFirmwareSelfProbe = NO;
-    self.pickingRealBoot = NO;
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc]
-            initForOpeningContentTypes:@[UTTypeFolder]
-                                 asCopy:NO];
-    picker.delegate = self;
-    picker.allowsMultipleSelection = NO;
-    [self presentViewController:picker animated:YES completion:nil];
-}
-
-- (void)probeFirmwareSelf {
-    self.pickingDecryptedFirmware = NO;
-    self.pickingFirmwareRoot = NO;
-    self.pickingFirmwareSelfProbe = YES;
-    self.pickingRealBoot = NO;
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc]
-            initForOpeningContentTypes:@[UTTypeFolder]
-                                 asCopy:NO];
-    picker.delegate = self;
-    picker.allowsMultipleSelection = NO;
-    [self presentViewController:picker animated:YES completion:nil];
-}
-
-- (void)attemptRealPS4Boot {
-    if (self.firmwareRootURL == nil) {
-        self.statusLabel.text =
-            @"Choose Firmware 5.05 root first. The real boot attempt will then read SceSysCore.elf.";
-        self.pickingDecryptedFirmware = NO;
-        self.pickingFirmwareRoot = NO;
-        self.pickingFirmwareSelfProbe = NO;
-        self.pickingRealBoot = YES;
-        UIDocumentPickerViewController *picker =
-            [[UIDocumentPickerViewController alloc]
-                initForOpeningContentTypes:@[UTTypeFolder]
-                                     asCopy:NO];
-        picker.delegate = self;
-        picker.allowsMultipleSelection = NO;
-        [self presentViewController:picker animated:YES completion:nil];
-        return;
-    }
-
-    [self attemptRealPS4BootAtURL:self.firmwareRootURL];
-}
-
-- (void)exportManifest {
-    if (self.manifestURL == nil) {
-        self.statusLabel.text =
-            @"Import a firmware file first to create a manifest.";
-        return;
-    }
-
-    UIDocumentPickerViewController *picker =
-        [[UIDocumentPickerViewController alloc]
-            initForExportingURLs:@[self.manifestURL]
-                           asCopy:YES];
-    picker.delegate = self;
-    [self presentViewController:picker animated:YES completion:nil];
-}
-
-- (void)runSyntheticJit {
-    [self runSyntheticBootWithMode:vshift::boot::ExecutionMode::Jit];
-}
-
-- (void)runSyntheticJitLess {
-    [self runSyntheticBootWithMode:vshift::boot::ExecutionMode::JitLess];
-}
-
-- (void)runSyntheticBootWithMode:(vshift::boot::ExecutionMode)mode {
-    const auto image = vshift::boot::BuildSyntheticElfFixture();
-    const auto report = vshift::boot::RunSyntheticElfBoot(image, mode);
-    NSString *modeName = mode == vshift::boot::ExecutionMode::Jit
-                             ? @"JIT"
-                             : @"JIT-less";
-    if (!report.ok()) {
-        self.statusLabel.text = [NSString stringWithFormat:
-            @"SYNTHETIC BOOT FAILED (%@)\n%s", modeName,
-            report.error.c_str()];
-        return;
-    }
-
-    self.statusLabel.text = [NSString stringWithFormat:
-        @"BOOT OK\nSynthetic ELF\nMode: %@\nEntry: 0x%llx\nSegments: %d\nResult: %u",
-        modeName,
-        static_cast<unsigned long long>(report.entry),
-        static_cast<int>(report.mapped_segments),
-        report.result];
-}
-
-- (void)attemptRealPS4BootAtURL:(NSURL *)rootURL {
-    const BOOL accessed = [rootURL startAccessingSecurityScopedResource];
-    self.guestFrameView.image = nil;
-    self.guestFrameView.hidden = YES;
-    self.guestFrameStateLabel.text = @"Waiting for guest video output";
-    vshift::boot::Ps4BootSession session(
-        [self](const vshift::video::GuestFrame& frame) {
-            return [self presentGuestFrame:frame];
-        });
-    const auto report = session.Run(
-        [&](std::string_view relativePath) -> vshift::boot::BootFile {
-            NSString *relative = [NSString stringWithUTF8String:
-                std::string(relativePath).c_str()];
-            NSURL *moduleURL = [rootURL URLByAppendingPathComponent:relative];
-            NSDictionary *attributes = [[NSFileManager defaultManager]
-                attributesOfItemAtPath:moduleURL.path error:nil];
-            NSNumber *sizeNumber = attributes[NSFileSize];
-            const auto fileSize = sizeNumber != nil
-                                      ? sizeNumber.unsignedLongLongValue
-                                      : 0;
-            if (fileSize == 0 || fileSize > 512ull * 1024ull * 1024ull) {
-                return {{}, "module is missing or too large"};
-            }
-            NSFileHandle *handle =
-                [NSFileHandle fileHandleForReadingFromURL:moduleURL error:nil];
-            if (handle == nil) {
-                return {{}, "module could not be opened"};
-            }
-            NSData *data = [handle readDataToEndOfFile];
-            [handle closeFile];
-            if (data.length != fileSize) {
-                return {{}, "module could not be read completely"};
-            }
-            const auto *bytes =
-                static_cast<const std::uint8_t *>(data.bytes);
-            return {std::vector<std::uint8_t>(bytes, bytes + data.length), {}};
-        });
-    if (accessed) {
-        [rootURL stopAccessingSecurityScopedResource];
-    }
-    if (!report.ok()) {
-        NSString *stage = @"firmware root";
-        switch (report.stage) {
-        case vshift::boot::Ps4BootStage::SysCore:
-            stage = @"SceSysCore";
-            break;
-        case vshift::boot::Ps4BootStage::ShellCore:
-            stage = @"SceShellCore";
-            break;
-        case vshift::boot::Ps4BootStage::GuestExecution:
-            stage = @"guest CPU";
-            break;
-        default:
-            break;
-        }
-        self.statusLabel.text = [NSString stringWithFormat:
-            @"REAL PS4 BOOT STOPPED\nStage: %@\n%s", stage,
-            report.error.c_str()];
-        return;
-    }
-    const auto *frame = session.video_output().last_frame();
-    if (frame != nullptr) {
-        self.statusLabel.text = [NSString stringWithFormat:
-            @"PS4 GUEST FRAME PRESENTED\nSceSysCore: %lu segments\nSceShellCore: %lu segments\nFrame: %ux%u",
-            static_cast<unsigned long>(report.syscore.mapped_segments),
-            static_cast<unsigned long>(report.shellcore.mapped_segments),
-            frame->description.width, frame->description.height];
-    } else if (report.modules_mapped()) {
-        self.statusLabel.text = [NSString stringWithFormat:
-            @"REAL PS4 BOOT PATH READY\nSceSysCore: %lu segments\nSceShellCore: %lu segments\nNo guest video frame was submitted.",
-            static_cast<unsigned long>(report.syscore.mapped_segments),
-            static_cast<unsigned long>(report.shellcore.mapped_segments)];
-    } else {
-        self.statusLabel.text = @"REAL PS4 BOOT STOPPED\nNo modules were mapped.";
-    }
-}
-
-- (BOOL)presentGuestFrame:(const vshift::video::GuestFrame&)frame {
-    if (frame.description.format != vshift::video::PixelFormat::Rgba8 &&
-        frame.description.format != vshift::video::PixelFormat::Bgra8) {
-        self.guestFrameStateLabel.text = @"Unsupported guest pixel format";
-        return NO;
-    }
-
-    NSData *pixelData = [NSData dataWithBytes:frame.pixels.data()
-                                       length:frame.pixels.size()];
-    CGDataProviderRef provider = CGDataProviderCreateWithCFData(
-        (__bridge CFDataRef)pixelData);
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGBitmapInfo bitmapInfo = frame.description.format ==
-                                      vshift::video::PixelFormat::Bgra8
-                                  ? (kCGBitmapByteOrder32Little |
-                                     kCGImageAlphaFirst)
-                                  : (kCGBitmapByteOrderDefault |
-                                     kCGImageAlphaLast);
-    CGImageRef image = CGImageCreate(
-        frame.description.width, frame.description.height, 8, 32,
-        frame.description.bytes_per_row, colorSpace, bitmapInfo, provider,
-        nullptr, false, kCGRenderingIntentDefault);
-    if (image == nullptr) {
-        CGColorSpaceRelease(colorSpace);
-        CGDataProviderRelease(provider);
-        self.guestFrameStateLabel.text = @"Guest frame could not be decoded";
-        return NO;
-    }
-
-    self.guestFrameView.image = [UIImage imageWithCGImage:image];
-    self.guestFrameView.hidden = NO;
-    self.guestFrameStateLabel.text = [NSString stringWithFormat:
-        @"Guest framebuffer · %ux%u",
-        frame.description.width, frame.description.height];
-    CGImageRelease(image);
-    CGColorSpaceRelease(colorSpace);
-    CGDataProviderRelease(provider);
-    return YES;
-}
-
-- (void)inspectFirmwareRootAtURL:(NSURL *)url {
-    self.firmwareRootURL = url;
-    const BOOL accessed = [url startAccessingSecurityScopedResource];
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    NSArray<NSString *> *requiredPaths = @[
-        @"system/common/lib/libkernel_sys.sprx",
-        @"system/common/lib/libSceLibcInternal.sprx",
-        @"system/common/lib/libkernel.sprx",
-    ];
-    NSArray<NSString *> *bootEntryCandidates = @[
-        // The PS4 system root stores the system core under /system/sys.
-        @"system/sys/SceSysCore.elf",
-    ];
-    NSArray<NSString *> *optionalPaths = @[
-        @"system/vsh/SceShellCore.elf",
-        @"system_ex",
-        @"preinst",
-    ];
-    NSMutableArray *requiredFound = [NSMutableArray array];
-    NSMutableArray *bootEntryFound = [NSMutableArray array];
-    NSMutableArray *optionalFound = [NSMutableArray array];
-    NSMutableArray *missingRequired = [NSMutableArray array];
-    NSMutableArray *missingBootEntries = [NSMutableArray array];
-    NSMutableArray *missingOptional = [NSMutableArray array];
-    void (^inspectPath)(NSString *, NSMutableArray *, NSMutableArray *) =
-        ^(NSString *relativePath, NSMutableArray *found, NSMutableArray *missing) {
-        NSURL *candidate = [url URLByAppendingPathComponent:relativePath];
-        BOOL isDirectory = NO;
-        const BOOL exists = [fileManager fileExistsAtPath:candidate.path
-                                             isDirectory:&isDirectory];
-        if (exists) {
-            NSDictionary *attributes =
-                [fileManager attributesOfItemAtPath:candidate.path error:nil];
-            [found addObject:@{
-                @"path": relativePath,
-                @"kind": isDirectory ? @"directory" : @"file",
-                @"size": attributes[NSFileSize] ?: @0,
-            }];
-        } else {
-            [missing addObject:relativePath];
-        }
-    };
-    for (NSString *relativePath in requiredPaths) {
-        inspectPath(relativePath, requiredFound, missingRequired);
-    }
-    for (NSString *relativePath in bootEntryCandidates) {
-        inspectPath(relativePath, bootEntryFound, missingBootEntries);
-    }
-    for (NSString *relativePath in optionalPaths) {
-        inspectPath(relativePath, optionalFound, missingOptional);
-    }
-    NSMutableArray *found = [requiredFound mutableCopy];
-    [found addObjectsFromArray:bootEntryFound];
-    [found addObjectsFromArray:optionalFound];
-    const BOOL requiredPathsPresent =
-        missingRequired.count == 0 && bootEntryFound.count > 0;
-
-    NSDictionary *manifest = @{
-        @"schema_version": @3,
-        @"source_file_name": url.lastPathComponent ?: @"firmware-root",
-        @"source_kind": @"user-provided decrypted PS4 firmware root",
-        @"boot_profile": @"PS4 VSH preflight",
-        @"root_path": url.path ?: @"",
-        @"required_paths": requiredPaths,
-        @"boot_entry_candidates": bootEntryCandidates,
-        @"optional_paths": optionalPaths,
-        @"found": found,
-        @"required_found": requiredFound,
-        @"boot_entry_found": bootEntryFound,
-        @"optional_found": optionalFound,
-        @"missing_required": missingRequired,
-        @"missing_boot_entries": missingBootEntries,
-        @"missing_optional": missingOptional,
-        @"boot_status": requiredPathsPresent
-            ? @"PS4 firmware root preflight passed; guest execution pending"
-            : @"Safe Mode root is incomplete",
-    };
-
-    if (accessed) {
-        [url stopAccessingSecurityScopedResource];
-    }
-
-    NSError *manifestError = nil;
-    const BOOL manifestSaved = [self writeManifest:manifest error:&manifestError];
-    NSMutableString *summary = [NSMutableString stringWithFormat:
-        @"FIRMWARE ROOT\n%@\nFound: %lu/%lu required paths",
-        url.lastPathComponent ?: @"firmware-root",
-        static_cast<unsigned long>(requiredFound.count),
-        static_cast<unsigned long>(requiredPaths.count)];
-    for (NSDictionary *item in requiredFound) {
-        [summary appendFormat:@"\n✓ %@", item[@"path"]];
-    }
-    if (missingRequired.count > 0) {
-        [summary appendFormat:@"\nMissing required: %@",
-            [missingRequired componentsJoinedByString:@", "]];
-    }
-    if (bootEntryFound.count > 0) {
-        for (NSDictionary *item in bootEntryFound) {
-            [summary appendFormat:@"\n✓ Boot entry: %@", item[@"path"]];
-        }
-    } else {
-        [summary appendFormat:@"\nMissing boot entry: %@",
-            [bootEntryCandidates componentsJoinedByString:@" or "]];
-    }
-    if (missingOptional.count > 0) {
-        [summary appendFormat:@"\nOptional not present: %@",
-            [missingOptional componentsJoinedByString:@", "]];
-    }
-    [summary appendFormat:@"\n%@\n%@",
-        requiredPathsPresent
-            ? @"PS4 firmware root preflight passed; next stage is SELF payload availability"
-            : @"Safe Mode preflight incomplete; choose the extracted firmware root",
-        manifestSaved
-            ? @"Manifest saved."
-            : [NSString stringWithFormat:@"Manifest save failed: %@",
-                manifestError.localizedDescription ?: @"unknown error"]];
-    self.statusLabel.text = summary;
-}
-
-- (void)probeFirmwareSelfAtURL:(NSURL *)url {
-    const BOOL accessed = [url startAccessingSecurityScopedResource];
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    NSArray<NSString *> *paths = @[
-        @"system/sys/SceSysCore.elf",
-        @"system/vsh/SceShellCore.elf",
-    ];
-    constexpr std::uint16_t kMaximumSelfHeaderSize = 16 * 1024;
-    NSMutableArray *probes = [NSMutableArray arrayWithCapacity:paths.count];
-    NSMutableString *summary = [NSMutableString stringWithFormat:
-        @"PS4 SELF PROBE\n%@", url.lastPathComponent ?: @"firmware-root"];
-    std::size_t validCount = 0;
-
-    for (NSString *relativePath in paths) {
-        NSURL *candidate = [url URLByAppendingPathComponent:relativePath];
-        NSDictionary *attributes =
-            [fileManager attributesOfItemAtPath:candidate.path error:nil];
-        NSNumber *fileSizeNumber = attributes[NSFileSize];
-        const auto fileSize = fileSizeNumber != nil
-                                  ? fileSizeNumber.unsignedLongLongValue
-                                  : 0;
-        NSMutableDictionary *probe = [@{
-            @"path": relativePath,
-            @"file_size": @(fileSize),
-        } mutableCopy];
-        if (fileSize < vshift::loader::kSelfHeaderSize) {
-            probe[@"error"] = @"file is missing or SELF header is truncated";
-            [probes addObject:probe];
-            [summary appendFormat:@"\n✗ %@", relativePath];
-            continue;
-        }
-
-        NSFileHandle *handle =
-            [NSFileHandle fileHandleForReadingFromURL:candidate error:nil];
-        if (handle == nil) {
-            probe[@"error"] = @"could not open SELF";
-            [probes addObject:probe];
-            [summary appendFormat:@"\n✗ %@ (open failed)", relativePath];
-            continue;
-        }
-
-        NSData *fixedData =
-            [handle readDataOfLength:vshift::loader::kSelfHeaderSize];
-        if (fixedData.length < vshift::loader::kSelfHeaderSize) {
-            [handle closeFile];
-            probe[@"error"] = @"SELF fixed header is truncated";
-            [probes addObject:probe];
-            [summary appendFormat:@"\n✗ %@ (truncated)", relativePath];
-            continue;
-        }
-
-        const auto *fixedBytes =
-            static_cast<const std::uint8_t *>(fixedData.bytes);
-        const auto magic = ReadU32LE(fixedBytes);
-        const auto headerSize = ReadU16LE(fixedBytes + 0x0C);
-        probe[@"magic"] = [NSString stringWithFormat:@"0x%08x", magic];
-        probe[@"header_size"] = @(headerSize);
-        if (magic != vshift::loader::kPs4SelfMagic ||
-            headerSize < vshift::loader::kSelfHeaderSize ||
-            headerSize > kMaximumSelfHeaderSize ||
-            headerSize > fileSize) {
-            [handle closeFile];
-            probe[@"error"] = @"invalid PS4 SELF public header";
-            [probes addObject:probe];
-            [summary appendFormat:@"\n✗ %@ (not a valid PS4 SELF header)",
-                relativePath];
-            continue;
-        }
-
-        [handle seekToFileOffset:0];
-        NSData *headerData =
-            [handle readDataOfLength:static_cast<NSUInteger>(headerSize)];
-        [handle closeFile];
-        if (headerData.length < headerSize) {
-            probe[@"error"] = @"SELF public header is truncated";
-            [probes addObject:probe];
-            [summary appendFormat:@"\n✗ %@ (header truncated)", relativePath];
-            continue;
-        }
-
-        const auto *headerBytes =
-            static_cast<const std::uint8_t *>(headerData.bytes);
-        const auto parsedSelf = vshift::loader::ParsePs4SelfHeaders(
-            std::span<const std::uint8_t>(headerBytes, headerData.length),
-            fileSize);
-        if (!parsedSelf.ok()) {
-            probe[@"error"] = [NSString stringWithUTF8String:
-                parsedSelf.error.c_str()];
-            [probes addObject:probe];
-            [summary appendFormat:@"\n✗ %@ (%s)", relativePath,
-                parsedSelf.error.c_str()];
-            continue;
-        }
-
-        std::size_t loadCount = 0;
-        std::size_t encryptedCount = 0;
-        std::size_t compressedCount = 0;
-        std::size_t blockedCount = 0;
-        for (const auto &entry : parsedSelf.entries) {
-            encryptedCount += entry.is_encrypted() ? 1 : 0;
-            compressedCount += entry.is_compressed() ? 1 : 0;
-            blockedCount += entry.is_blocked() ? 1 : 0;
-        }
-        for (const auto &program : parsedSelf.elf.program_headers) {
-            if (program.type == vshift::loader::kElfProgramLoad) {
-                ++loadCount;
-            }
-        }
-        const auto mappings = vshift::loader::MatchSelfLoadEntries(parsedSelf);
-        probe[@"metadata_size"] = @(parsedSelf.header.metadata_size);
-        probe[@"entry_count"] = @(parsedSelf.header.entry_count);
-        probe[@"elf_offset"] = @(parsedSelf.elf.offset);
-        probe[@"elf_machine"] = @(parsedSelf.elf.header.machine);
-        probe[@"elf_entry"] = [NSString stringWithFormat:@"0x%llx",
-            static_cast<unsigned long long>(parsedSelf.elf.header.entry)];
-        probe[@"elf_program_headers"] = @(parsedSelf.elf.program_headers.size());
-        probe[@"elf_load_segments"] = @(loadCount);
-        probe[@"payload_map_count"] = @(mappings.size());
-        probe[@"encrypted_entries"] = @(encryptedCount);
-        probe[@"compressed_entries"] = @(compressedCount);
-        probe[@"blocked_entries"] = @(blockedCount);
-        probe[@"payload_state"] = encryptedCount > 0
-            ? @"protected SELF payload; guest code unavailable"
-            : (compressedCount > 0
-                ? @"compressed SELF payload; decompression pending"
-                : (mappings.size() == loadCount
-                    ? @"payload map is executable-source ready"
-                    : @"partial payload map; source bytes pending"));
-        [probes addObject:probe];
-        ++validCount;
-
-        NSString *machine = parsedSelf.elf.header.machine ==
-                                    vshift::loader::kElfMachineX86_64
-                                ? @"x86_64"
-                                : [NSString stringWithFormat:@"machine %u",
-                                    parsedSelf.elf.header.machine];
-        [summary appendFormat:
-            @"\n✓ %@\n  SELF 0x%08x, ELF %@\n  Entry %@, PT_LOAD %lu, map %lu/%lu\n  Payload: %lu encrypted, %lu compressed",
-            relativePath, parsedSelf.header.magic, machine, probe[@"elf_entry"],
-            static_cast<unsigned long>(loadCount),
-            static_cast<unsigned long>(mappings.size()),
-            static_cast<unsigned long>(loadCount),
-            static_cast<unsigned long>(encryptedCount),
-            static_cast<unsigned long>(compressedCount)];
-    }
-
-    NSDictionary *manifest = @{
-        @"schema_version": @4,
-        @"source_file_name": url.lastPathComponent ?: @"firmware-root",
-        @"source_kind": @"user-provided decrypted PS4 firmware root",
-        @"boot_profile": @"PS4 VSH SELF probe",
-        @"root_path": url.path ?: @"",
-        @"self_probe": probes,
-        @"boot_status": validCount > 0
-            ? @"PS4 SELF headers validated; protected payload availability reported"
-            : @"No valid PS4 SELF entry was found",
-    };
-
-    if (accessed) {
-        [url stopAccessingSecurityScopedResource];
-    }
-    NSError *manifestError = nil;
-    const BOOL manifestSaved = [self writeManifest:manifest error:&manifestError];
-    [summary appendFormat:@"\n%@\n%@",
-        validCount > 0
-            ? @"Real PS4 SELF metadata is mapped; payload protection is the next blocker."
-            : @"Choose the extracted Firmware 5.05 root.",
-        manifestSaved
-            ? @"Manifest saved."
-            : [NSString stringWithFormat:@"Manifest save failed: %@",
-                manifestError.localizedDescription ?: @"unknown error"]];
-    self.statusLabel.text = summary;
-}
-
-- (void)inspectDecryptedFirmwareAtURL:(NSURL *)url {
-    const BOOL accessed = [url startAccessingSecurityScopedResource];
-    NSError *attributesError = nil;
-    NSDictionary *attributes =
-        [[NSFileManager defaultManager] attributesOfItemAtPath:url.path
-                                                          error:&attributesError];
-    NSNumber *fileSizeNumber = attributes[NSFileSize];
-    const auto fileSize = fileSizeNumber != nil
-                              ? fileSizeNumber.unsignedLongLongValue
-                              : 0;
-    if (attributesError != nil ||
-        fileSize < vshift::firmware::kPupFragmentPublicHeaderSize) {
-        self.statusLabel.text =
-            @"Decrypted PUP is too small or unreadable.";
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    NSError *openError = nil;
-    NSFileHandle *handle =
-        [NSFileHandle fileHandleForReadingFromURL:url error:&openError];
-    if (handle == nil) {
-        self.statusLabel.text = [NSString stringWithFormat:
-            @"Could not open decrypted PUP: %@",
-            openError.localizedDescription ?: @"unknown error"];
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    NSData *fixedHeaderData =
-        [handle readDataOfLength:vshift::firmware::kPupFixedHeaderSize];
-    if (fixedHeaderData.length < vshift::firmware::kPupFixedHeaderSize) {
-        [handle closeFile];
-        self.statusLabel.text = @"Could not read decrypted PUP header.";
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    const auto *fixedHeaderBytes =
-        static_cast<const std::uint8_t *>(fixedHeaderData.bytes);
-    const auto publicHeader = vshift::firmware::ParsePupFragmentHeader(
-        std::span<const std::uint8_t>(
-            fixedHeaderBytes, vshift::firmware::kPupFixedHeaderSize));
-    if (!publicHeader.ok()) {
-        [handle closeFile];
-        self.statusLabel.text = [NSString stringWithFormat:
-            @"Decrypted PUP header failed:\n%s", publicHeader.error.c_str()];
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    constexpr std::uint16_t kMaximumHeaderSize = 16 * 1024;
-    if (publicHeader.header.header_size < vshift::firmware::kPupFixedHeaderSize ||
-        publicHeader.header.header_size > kMaximumHeaderSize ||
-        publicHeader.header.header_size > fileSize) {
-        [handle closeFile];
-        self.statusLabel.text = @"Decrypted PUP header size is invalid.";
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    [handle seekToFileOffset:0];
-    NSData *headerData =
-        [handle readDataOfLength:publicHeader.header.header_size];
-    if (headerData.length < publicHeader.header.header_size) {
-        [handle closeFile];
-        self.statusLabel.text = @"Could not read the decrypted PUP table.";
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    const auto *headerBytes =
-        static_cast<const std::uint8_t *>(headerData.bytes);
-    const auto parsed = vshift::firmware::ParseDecryptedPupHeaders(
-        std::span<const std::uint8_t>(headerBytes, headerData.length),
-        fileSize);
-    if (!parsed.ok()) {
-        [handle closeFile];
-        self.statusLabel.text = [NSString stringWithFormat:
-            @"Decrypted PUP table failed:\n%s", parsed.error.c_str()];
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    NSMutableArray *segments =
-        [NSMutableArray arrayWithCapacity:parsed.segments.size()];
-    for (std::size_t index = 0; index < parsed.segments.size(); ++index) {
-        const auto &segment = parsed.segments[index];
-        [segments addObject:@{
-            @"index": @(index),
-            @"flags": @(segment.flags),
-            @"offset": @(segment.offset),
-            @"compressed_size": @(segment.compressed_size),
-            @"uncompressed_size": @(segment.uncompressed_size),
-        }];
-    }
-
-    // Scan only bounded prefixes of PUP segments. This identifies the PS5
-    // SELF container and its embedded ELF table without touching payload code.
-    constexpr std::size_t kSelfPrefixLimit = 16 * 1024;
-    NSMutableArray *selfCandidates = [NSMutableArray array];
-    std::size_t selfMagicCount = 0;
-    std::size_t validSelfCount = 0;
-    NSDictionary *primarySelfCandidate = nil;
-    for (std::size_t index = 0; index < parsed.segments.size(); ++index) {
-        const auto &segment = parsed.segments[index];
-        if (segment.compressed_size < vshift::loader::kSelfHeaderSize ||
-            segment.offset > fileSize ||
-            segment.compressed_size > fileSize - segment.offset) {
-            continue;
-        }
-
-        [handle seekToFileOffset:segment.offset];
-        const auto fixedLength = static_cast<NSUInteger>(std::min<std::uint64_t>(
-            segment.compressed_size, vshift::loader::kSelfHeaderSize));
-        NSData *selfFixedData = [handle readDataOfLength:fixedLength];
-        if (selfFixedData.length < sizeof(std::uint32_t)) {
-            continue;
-        }
-        const auto *selfFixedBytes =
-            static_cast<const std::uint8_t *>(selfFixedData.bytes);
-        if (ReadU32LE(selfFixedBytes) != vshift::loader::kPs5SelfMagic) {
-            continue;
-        }
-        ++selfMagicCount;
-
-        NSMutableDictionary *candidate = [@{
-            @"pup_segment_index": @(index),
-            @"offset": @(segment.offset),
-            @"compressed_size": @(segment.compressed_size),
-            @"uncompressed_size": @(segment.uncompressed_size),
-            @"magic": @"0xeef51454",
-        } mutableCopy];
-
-        if (selfFixedData.length < vshift::loader::kSelfHeaderSize) {
-            candidate[@"parse_error"] = @"truncated SELF header";
-            [selfCandidates addObject:candidate];
-            continue;
-        }
-
-        const auto selfHeaderSize = ReadU16LE(selfFixedBytes + 0x0C);
-        if (selfHeaderSize < vshift::loader::kSelfHeaderSize ||
-            selfHeaderSize > kSelfPrefixLimit ||
-            selfHeaderSize > segment.compressed_size) {
-            candidate[@"parse_error"] = @"invalid SELF header size";
-            [selfCandidates addObject:candidate];
-            continue;
-        }
-
-        [handle seekToFileOffset:segment.offset];
-        NSData *selfHeaderData =
-            [handle readDataOfLength:static_cast<NSUInteger>(selfHeaderSize)];
-        const auto *selfHeaderBytes =
-            static_cast<const std::uint8_t *>(selfHeaderData.bytes);
-        const auto self = vshift::loader::ParsePs5SelfHeaders(
-            std::span<const std::uint8_t>(selfHeaderBytes,
-                                          selfHeaderData.length),
-            segment.compressed_size);
-        if (!self.ok()) {
-            candidate[@"parse_error"] = [NSString stringWithUTF8String:
-                self.error.c_str()];
-            [selfCandidates addObject:candidate];
-            continue;
-        }
-
-        std::size_t loadSegmentCount = 0;
-        for (const auto &programHeader : self.elf.program_headers) {
-            if (programHeader.type == vshift::loader::kElfProgramLoad) {
-                ++loadSegmentCount;
-            }
-        }
-        const auto mappings = vshift::loader::MatchSelfLoadEntries(self);
-        NSMutableArray *loadMappings = [NSMutableArray arrayWithCapacity:
-            mappings.size()];
-        for (const auto &mapping : mappings) {
-            [loadMappings addObject:@{
-                @"elf_program_header_index": @(mapping.program_header_index),
-                @"self_entry_index": @(mapping.self_entry_index),
-                @"physical_offset": @(mapping.physical_offset),
-                @"virtual_address": [NSString stringWithFormat:
-                    @"0x%llx",
-                    static_cast<unsigned long long>(mapping.virtual_address)],
-                @"file_size": @(mapping.file_size),
-                @"memory_size": @(mapping.memory_size),
-            }];
-        }
-        candidate[@"header_size"] = @(self.header.header_size);
-        candidate[@"metadata_size"] = @(self.header.metadata_size);
-        candidate[@"entry_count"] = @(self.header.entry_count);
-        candidate[@"elf_offset"] = @(self.elf.offset);
-        candidate[@"elf_type"] = @(self.elf.header.type);
-        candidate[@"elf_machine"] = @(self.elf.header.machine);
-        candidate[@"elf_entry"] = [NSString stringWithFormat:
-            @"0x%llx", static_cast<unsigned long long>(self.elf.header.entry)];
-        candidate[@"elf_program_headers"] = @(self.elf.program_headers.size());
-        candidate[@"elf_load_segments"] = @(loadSegmentCount);
-        candidate[@"load_mappings"] = loadMappings;
-        candidate[@"payload_state"] =
-            mappings.size() == loadSegmentCount
-                ? @"size-correlated payload map; decryption pending"
-                : @"partial payload map; decryption pending";
-        [selfCandidates addObject:candidate];
-        ++validSelfCount;
-        if (primarySelfCandidate == nil) {
-            primarySelfCandidate = candidate;
-        }
-    }
-
-    [handle closeFile];
-
-    NSString *bootStatus = validSelfCount > 0
-        ? @"PUP + SELF/ELF validated; size-correlated payload map ready"
-        : (selfMagicCount > 0
-            ? @"PUP table valid; SELF candidate needs more header data"
-            : @"PUP table validated; SELF/ELF candidate not found");
-
-    NSDictionary *manifest = @{
-        @"schema_version": @2,
-        @"source_file_name": url.lastPathComponent ?: @"PS5UPDATE1.PUP.dec",
-        @"source_kind": @"user-provided decrypted component",
-        @"container_format": @"PS5 PUP/SELF public header",
-        @"container_size": @(fileSize),
-        @"decrypted": @YES,
-        @"public_header": @{
-            @"magic": [NSString stringWithFormat:@"0x%08x",
-                        parsed.header.public_header.magic],
-            @"version": @(parsed.header.public_header.version),
-            @"mode": @(parsed.header.public_header.mode),
-            @"endian": @(parsed.header.public_header.endian),
-            @"attributes": @(parsed.header.public_header.attributes),
-            @"key_type": @(parsed.header.public_header.key_type),
-            @"header_size": @(parsed.header.public_header.header_size),
-            @"metadata_size": @(parsed.header.public_header.metadata_size),
-        },
-        @"pup": @{
-            @"file_size": @(parsed.header.file_size),
-            @"segment_count": @(parsed.header.segment_count),
-            @"flags": @(parsed.header.flags),
-            @"firmware_version": [NSString stringWithFormat:@"0x%08x",
-                                  parsed.header.firmware_version],
-            @"segments": segments,
-        },
-        @"self_candidates": selfCandidates,
-        @"boot_status": bootStatus,
-    };
-
-    if (accessed) {
-        [url stopAccessingSecurityScopedResource];
-    }
-
-    NSError *manifestError = nil;
-    const BOOL manifestSaved = [self writeManifest:manifest error:&manifestError];
-    NSString *segmentSummary = [NSString stringWithFormat:
-        @"Segments: %u", parsed.header.segment_count];
-    if (!parsed.segments.empty()) {
-        const auto &first = parsed.segments.front();
-        segmentSummary = [NSString stringWithFormat:
-            @"Segments: %u\nFirst payload: 0x%llx (%llu bytes)",
-            parsed.header.segment_count,
-            static_cast<unsigned long long>(first.offset),
-            static_cast<unsigned long long>(first.compressed_size)];
-    }
-    NSMutableString *summary = [NSMutableString stringWithFormat:
-        @"DECRYPTED PUP READY\n%@\nSize: %llu bytes\nFirmware: 0x%08x\n%@",
-        url.lastPathComponent ?: @"PS5UPDATE1.PUP.dec",
-        static_cast<unsigned long long>(fileSize),
-        parsed.header.firmware_version,
-        segmentSummary];
-    if (validSelfCount > 0) {
-        NSDictionary *candidate = primarySelfCandidate;
-        [summary appendFormat:
-            @"\nSELF: segment %@\nELF: %@, entry %@\nPT_LOAD: %@",
-            candidate[@"pup_segment_index"],
-            [candidate[@"elf_machine"] integerValue] ==
-                    vshift::loader::kElfMachineX86_64
-                ? @"x86_64"
-                : [NSString stringWithFormat:@"machine %lld",
-                    [candidate[@"elf_machine"] longLongValue]],
-            candidate[@"elf_entry"],
-            candidate[@"elf_load_segments"]];
-        NSArray *mappings = candidate[@"load_mappings"];
-        [summary appendFormat:@"\nPayload map: %@/%@ PT_LOADs",
-                              @(mappings.count), candidate[@"elf_load_segments"]];
-    } else {
-        [summary appendFormat:@"\nSELF magic candidates: %lu",
-                              static_cast<unsigned long>(selfMagicCount)];
-    }
-    [summary appendFormat:@"\n%@\n%@",
-        bootStatus,
-        manifestSaved
-            ? @"Manifest saved. SELF/ELF header map is ready."
-            : [NSString stringWithFormat:@"Manifest save failed: %@",
-                manifestError.localizedDescription ?: @"unknown error"]];
-    self.statusLabel.text = summary;
-}
-
-- (BOOL)writeManifest:(NSDictionary *)manifest error:(NSError **)error {
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    NSURL *applicationSupport =
-        [fileManager URLForDirectory:NSApplicationSupportDirectory
-                            inDomain:NSUserDomainMask
-                   appropriateForURL:nil
-                              create:YES
-                               error:error];
-    if (applicationSupport == nil) {
-        return NO;
-    }
-
-    NSURL *vshiftDirectory =
-        [applicationSupport URLByAppendingPathComponent:@"VSHift"
-                                             isDirectory:YES];
-    if (![fileManager createDirectoryAtURL:vshiftDirectory
-                withIntermediateDirectories:YES
-                                 attributes:nil
-                                      error:error]) {
-        return NO;
-    }
-
-    NSData *manifestData =
-        [NSJSONSerialization dataWithJSONObject:manifest
-                                         options:NSJSONWritingPrettyPrinted
-                                           error:error];
-    if (manifestData == nil) {
-        return NO;
-    }
-
-    NSURL *manifestURL =
-        [vshiftDirectory URLByAppendingPathComponent:@"firmware-manifest.json"];
-    const BOOL saved = [manifestData writeToURL:manifestURL
-                                        options:NSDataWritingAtomic
-                                          error:error];
-    if (saved) {
-        self.manifestURL = manifestURL;
-        self.exportManifestButton.enabled = YES;
-    }
-    return saved;
+- (void)mountISO {
+    [self presentPicker:VSHiftPickerModeIso];
 }
 
 - (void)documentPicker:(UIDocumentPickerViewController *)controller
  didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     (void)controller;
     NSURL *url = urls.firstObject;
-    if (url == nil) {
+    if (!url) {
         return;
     }
-
-    if (self.pickingDecryptedFirmware) {
-        self.pickingDecryptedFirmware = NO;
-        [self inspectDecryptedFirmwareAtURL:url];
-        return;
+    switch (self.pickerMode) {
+    case VSHiftPickerModeFirmware:
+        [self installFirmwareAtURL:url];
+        break;
+    case VSHiftPickerModeMedia:
+        [self importMediaAtURL:url];
+        break;
+    case VSHiftPickerModeIso:
+        [self mountISOAtURL:url];
+        break;
     }
-
-    if (self.pickingFirmwareRoot) {
-        self.pickingFirmwareRoot = NO;
-        [self inspectFirmwareRootAtURL:url];
-        return;
-    }
-
-    if (self.pickingFirmwareSelfProbe) {
-        self.pickingFirmwareSelfProbe = NO;
-        [self probeFirmwareSelfAtURL:url];
-        return;
-    }
-
-    if (self.pickingRealBoot) {
-        self.pickingRealBoot = NO;
-        self.firmwareRootURL = url;
-        [self attemptRealPS4BootAtURL:url];
-        return;
-    }
-
-    const BOOL accessed = [url startAccessingSecurityScopedResource];
-    NSError *attributesError = nil;
-    NSDictionary *attributes =
-        [[NSFileManager defaultManager] attributesOfItemAtPath:url.path
-                                                          error:&attributesError];
-    NSNumber *fileSizeNumber = attributes[NSFileSize];
-    const auto fileSize = fileSizeNumber != nil
-                              ? fileSizeNumber.unsignedLongLongValue
-                              : 0;
-    if (attributesError != nil || fileSize < vshift::firmware::kSlb2HeaderSize) {
-        self.statusLabel.text = @"Firmware file is too small or unreadable.";
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    NSFileHandle *handle = [NSFileHandle fileHandleForReadingFromURL:url
-                                                                 error:nil];
-    if (handle == nil) {
-        self.statusLabel.text = @"Could not open firmware file.";
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-    NSData *headerData = [handle readDataOfLength:vshift::firmware::kSlb2HeaderSize];
-    if (headerData.length < vshift::firmware::kSlb2HeaderSize) {
-        self.statusLabel.text = @"Could not read firmware header.";
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    const auto *header = static_cast<const std::uint8_t *>(headerData.bytes);
-    if (header[0] != 'S' || header[1] != 'L' || header[2] != 'B' ||
-        header[3] != '2') {
-        self.statusLabel.text = @"This is not a PS5 SLB2 firmware container.";
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    const auto entryCount = ReadU32LE(header + 0x0C);
-    constexpr std::uint32_t kMaximumEntries = 1'000'000;
-    if (entryCount > kMaximumEntries) {
-        self.statusLabel.text = @"Firmware table entry count is invalid.";
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    const auto tableSize = vshift::firmware::kSlb2HeaderSize +
-                           static_cast<std::size_t>(entryCount) *
-                               vshift::firmware::kSlb2EntrySize;
-    if (tableSize > fileSize ||
-        tableSize > static_cast<std::size_t>(
-                         std::numeric_limits<NSInteger>::max())) {
-        self.statusLabel.text = @"Firmware file table is invalid.";
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    [handle seekToFileOffset:0];
-    NSData *tableData = [handle readDataOfLength:tableSize];
-    if (tableData.length != tableSize) {
-        self.statusLabel.text = @"Could not read firmware file table.";
-        [handle closeFile];
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    const auto *tableBytes = static_cast<const std::uint8_t *>(tableData.bytes);
-    const auto parsed = vshift::firmware::ParseSlb2Table(
-        std::span<const std::uint8_t>(tableBytes, tableData.length), fileSize);
-    if (!parsed.ok()) {
-    self.statusLabel.text = [NSString stringWithFormat:
-            @"Firmware parse failed:\n%s", parsed.error.c_str()];
-        [handle closeFile];
-        if (accessed) {
-            [url stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    const vshift::firmware::ReadOnlyFirmwareCatalog catalog(parsed.package);
-    std::size_t fragmentIndex = parsed.package.entries.size();
-    for (std::size_t index = 0; index < parsed.package.entries.size(); ++index) {
-        if (parsed.package.entries[index].size >=
-            vshift::firmware::kPupFragmentPublicHeaderSize) {
-            fragmentIndex = index;
-            break;
-        }
-    }
-
-    vshift::firmware::PupFragmentParseResult fragment;
-    bool fragmentRead = false;
-    if (fragmentIndex < parsed.package.entries.size()) {
-        const auto &entry = parsed.package.entries[fragmentIndex];
-        const auto range = catalog.Resolve(
-            entry.name, 0, vshift::firmware::kPupFragmentPublicHeaderSize);
-        if (range.ok()) {
-            [handle seekToFileOffset:range.range.absolute_offset];
-            NSData *fragmentData =
-                [handle readDataOfLength:
-                             vshift::firmware::kPupFragmentPublicHeaderSize];
-            if (fragmentData.length ==
-                vshift::firmware::kPupFragmentPublicHeaderSize) {
-                const auto *fragmentBytes =
-                    static_cast<const std::uint8_t *>(fragmentData.bytes);
-                fragment = vshift::firmware::ParsePupFragmentHeader(
-                    std::span<const std::uint8_t>(
-                        fragmentBytes, fragmentData.length));
-                fragmentRead = true;
-            }
-        }
-    }
-
-    NSMutableArray *components = [NSMutableArray arrayWithCapacity:
-        parsed.package.entries.size()];
-    for (std::size_t index = 0; index < parsed.package.entries.size(); ++index) {
-        const auto &entry = parsed.package.entries[index];
-        NSString *name = [NSString stringWithUTF8String:entry.name.c_str()];
-        NSMutableDictionary *component = [@{
-            @"name": name ?: @"(unnamed)",
-            @"offset": @(entry.offset),
-            @"size": @(entry.size),
-        } mutableCopy];
-        if (index == fragmentIndex && fragmentRead && fragment.ok()) {
-            component[@"fragment_header"] = @{
-                @"format": @"PS5 PUP/SELF public header",
-                @"magic": [NSString stringWithFormat:@"0x%08x",
-                            fragment.header.magic],
-                @"version": @(fragment.header.version),
-                @"mode": @(fragment.header.mode),
-                @"endian": @(fragment.header.endian),
-                @"attributes": @(fragment.header.attributes),
-                @"key_type": @(fragment.header.key_type),
-                @"header_size": @(fragment.header.header_size),
-                @"metadata_size": @(fragment.header.metadata_size),
-            };
-        }
-        [components addObject:component];
-    }
-
-    NSDictionary *manifest = @{
-        @"schema_version": @1,
-        @"source_file_name": url.lastPathComponent ?: @"PS5UPDATE.PUP",
-        @"container_format": @"SLB2",
-        @"container_size": @(fileSize),
-        @"slb2": @{
-            @"version": @(parsed.package.version),
-            @"flags": @(parsed.package.flags),
-            @"entry_count": @(parsed.package.entry_count),
-            @"size_in_sectors": @(parsed.package.size_in_sectors),
-        },
-        @"components": components,
-    };
-
-    [handle closeFile];
-    if (accessed) {
-        [url stopAccessingSecurityScopedResource];
-    }
-
-    NSError *manifestError = nil;
-    const BOOL manifestSaved = [self writeManifest:manifest
-                                             error:&manifestError];
-
-    NSMutableString *summary = [NSMutableString stringWithFormat:
-        @"SLB2 OK\n%d components", parsed.package.entry_count];
-    const std::size_t visibleEntries =
-        std::min<std::size_t>(parsed.package.entries.size(), 8);
-    for (std::size_t index = 0; index < visibleEntries; ++index) {
-        const auto &entry = parsed.package.entries[index];
-        [summary appendFormat:@"\n• %s (%llu bytes)", entry.name.c_str(),
-                              static_cast<unsigned long long>(entry.size)];
-    }
-    if (parsed.package.entries.size() > visibleEntries) {
-        [summary appendFormat:@"\n… and %d more",
-                              static_cast<int>(parsed.package.entries.size() -
-                                               visibleEntries)];
-    }
-    if (fragmentRead && fragment.ok()) {
-        [summary appendFormat:@"\nPS5 fragment: 0x%08x, header 0x%x",
-                              fragment.header.magic,
-                              fragment.header.header_size];
-    } else if (fragmentRead) {
-        [summary appendFormat:@"\nFragment header: %s",
-                              fragment.error.c_str()];
-    }
-    if (manifestSaved) {
-        [summary appendString:@"\nManifest saved"];
-    } else {
-        [summary appendFormat:@"\nManifest save failed: %@",
-                              manifestError.localizedDescription ?: @"unknown error"];
-    }
-    self.statusLabel.text = summary;
 }
+
+- (void)installFirmwareAtURL:(NSURL *)url {
+    if (!self.workspaceURL) {
+        return;
+    }
+    NSError *workspaceError = nil;
+    NSURL *workspace = self.workspaceURL ?: [self createWorkspace:&workspaceError];
+    if (!workspace) {
+        self.statusLabel.text = @"PS3 storage is unavailable.";
+        return;
+    }
+    const BOOL accessed = [url startAccessingSecurityScopedResource];
+    std::filesystem::path pupPath(url.path.fileSystemRepresentation);
+    std::filesystem::path rootPath(workspace.path.fileSystemRepresentation);
+    self.statusLabel.text = @"Installing PS3 firmware with RPCS3 PUP/SELF/TAR code…";
+    self.startButton.enabled = NO;
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        vshift::ps3::Rpcs3FirmwareInstaller installer;
+        const auto report = installer.Install(pupPath, rootPath);
+        if (accessed) {
+            [url stopAccessingSecurityScopedResource];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!report.ok()) {
+                self.statusLabel.text = [NSString stringWithFormat:
+                    @"PS3 firmware install failed:\n%s", report.error.c_str()];
+                return;
+            }
+            self.statusLabel.text = [NSString stringWithFormat:
+                @"PS3 firmware installed\nVersion: %s\nPackages: %llu\nStarting VSH is the next step.",
+                report.firmware_version.c_str(),
+                static_cast<unsigned long long>(report.package_count)];
+            self.startButton.enabled = YES;
+            [self startVSH];
+        });
+    });
+}
+
+- (void)startVSH {
+    if (_core && _core->running()) {
+        self.statusLabel.text = @"PS3 VSH is already running.";
+        return;
+    }
+    if (!self.workspaceURL) {
+        self.statusLabel.text = @"Import and install PS3 firmware first.";
+        return;
+    }
+    NSURL *vshURL = [self.workspaceURL URLByAppendingPathComponent:@"dev_flash/vsh/module/vsh.self"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:vshURL.path]) {
+        self.statusLabel.text = @"dev_flash/vsh/module/vsh.self was not found. Install PS3UPDAT.PUP first.";
+        return;
+    }
+
+    std::filesystem::path rootPath(self.workspaceURL.path.fileSystemRepresentation);
+    __weak VSHiftViewController *weakSelf = self;
+    _core = std::make_unique<vshift::ps3::Rpcs3Core>(vshift::ps3::CoreCallbacks{
+        .on_started = [weakSelf]() {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                VSHiftViewController *strongSelf = weakSelf;
+                if (!strongSelf) return;
+                strongSelf.statusLabel.text = @"VSH boot path started. Waiting for a real RPCS3 RSX frame; XMB is not emulated by the frontend.";
+                strongSelf.guestFrameStateLabel.text = @"VSH started\nWaiting for real RSX video output";
+                strongSelf.drawerButton.hidden = NO;
+            });
+        },
+        .on_stopped = [weakSelf]() {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                VSHiftViewController *strongSelf = weakSelf;
+                if (!strongSelf) return;
+                strongSelf.statusLabel.text = @"PS3 emulator stopped.";
+                strongSelf.guestFrameStateLabel.text = @"Real PS3 RSX frame is not connected yet\nNo synthetic XMB is shown";
+                strongSelf.startButton.enabled = YES;
+            });
+        },
+        .on_log = [](std::string) {},
+    });
+    vshift::ps3::Rpcs3Core *core = _core.get();
+    self.statusLabel.text = @"Initializing RPCS3 PS3 core and mounting dev_flash…";
+    self.startButton.enabled = NO;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        const auto report = core->StartVsh(rootPath);
+        if (!report.ok()) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                VSHiftViewController *strongSelf = weakSelf;
+                if (!strongSelf) return;
+                strongSelf.statusLabel.text = [NSString stringWithFormat:
+                    @"Real PS3 VSH start failed:\n%s", report.error.c_str()];
+                strongSelf.startButton.enabled = YES;
+                strongSelf->_core.reset();
+            });
+        }
+    });
+}
+
+- (void)stopVSH {
+    if (!_core) {
+        self.statusLabel.text = @"PS3 emulator is not running.";
+        return;
+    }
+    vshift::ps3::Rpcs3Core *core = _core.get();
+    self.statusLabel.text = @"Stopping RPCS3…";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        core->Stop();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_core.reset();
+            [self refreshFirmwareState];
+        });
+    });
+}
+
+- (void)togglePause {
+    if (!_core || !_core->running()) {
+        self.statusLabel.text = @"Start the real PS3 VSH before using pause.";
+        return;
+    }
+    vshift::ps3::Rpcs3Core *core = _core.get();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        const BOOL paused = core->Pause();
+        if (!paused) {
+            core->Resume();
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.statusLabel.text = paused ? @"PS3 VSH paused." : @"PS3 VSH resumed.";
+        });
+    });
+}
+
+- (void)importMediaAtURL:(NSURL *)url {
+    if (!self.workspaceURL) return;
+    const BOOL accessed = [url startAccessingSecurityScopedResource];
+    std::filesystem::path source(url.path.fileSystemRepresentation);
+    std::filesystem::path root(self.workspaceURL.path.fileSystemRepresentation);
+    self.statusLabel.text = @"Importing file into the PS3 virtual storage…";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        const auto report = vshift::frontend::ImportMediaFile(source, root);
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!report.ok()) {
+                self.statusLabel.text = [NSString stringWithFormat:
+                    @"Import failed:\n%s", report.error.c_str()];
+                return;
+            }
+            self.statusLabel.text = [NSString stringWithFormat:
+                @"Imported %@ into the virtual console:\n%@",
+                MediaKindName(report.kind),
+                StringFromUTF8(report.destination.string)];
+        });
+    });
+}
+
+- (void)mountISOAtURL:(NSURL *)url {
+    if (!_core || !_core->running()) {
+        self.statusLabel.text = @"Start the real PS3 VSH before mounting an ISO.";
+        return;
+    }
+    const BOOL accessed = [url startAccessingSecurityScopedResource];
+    std::filesystem::path iso(url.path.fileSystemRepresentation);
+    vshift::ps3::Rpcs3Core *core = _core.get();
+    self.statusLabel.text = @"Asking RPCS3 to insert the selected ISO…";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        const BOOL mounted = core->MountIso(iso);
+        if (accessed) [url stopAccessingSecurityScopedResource];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.statusLabel.text = mounted
+                ? @"ISO mounted through RPCS3 dev_bdvd."
+                : @"RPCS3 could not recognize or mount this ISO.";
+        });
+    });
+}
+
+- (void)toggleDrawer {
+    self.drawerOpen = !self.drawerOpen;
+    self.controlDrawer.hidden = !self.drawerOpen;
+    NSString *symbol = self.drawerOpen ? @"chevron.right" : @"chevron.left";
+    [self.drawerButton setImage:[UIImage systemImageNamed:symbol] forState:UIControlStateNormal];
+}
+
+- (void)openSettings {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"PS3 console settings"
+                                                                       message:@"PS3 RAM is fixed by the console hardware. These UTM-style values control the host bridge and are saved for the upcoming RSX/audio adapters."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"Resolution scale (1–3)";
+        field.keyboardType = UIKeyboardTypeNumberPad;
+        field.text = [[NSUserDefaults standardUserDefaults] stringForKey:@"resolutionScale"] ?: @"1";
+    }];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder = @"Audio buffer (ms)";
+        field.keyboardType = UIKeyboardTypeNumberPad;
+        field.text = [[NSUserDefaults standardUserDefaults] stringForKey:@"audioBufferMs"] ?: @"80";
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        NSArray<UITextField *> *fields = alert.textFields;
+        [[NSUserDefaults standardUserDefaults] setObject:fields[0].text ?: @"1" forKey:@"resolutionScale"];
+        [[NSUserDefaults standardUserDefaults] setObject:fields[1].text ?: @"80" forKey:@"audioBufferMs"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+        self.statusLabel.text = @"Host settings saved. Renderer/audio values will be applied by their native adapters.";
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (BOOL)prefersStatusBarHidden {
+    return self.fullscreen;
+}
+
+- (void)dealloc {
+    if (_core) {
+        _core->Stop();
+        _core.reset();
+    }
+}
+
 @end
 
 @interface VSHiftAppDelegate : UIResponder <UIApplicationDelegate>
@@ -1420,15 +592,17 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 @end
 
 @implementation VSHiftAppDelegate
+
 - (BOOL)application:(UIApplication *)application
     didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     (void)application;
     (void)launchOptions;
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    self.window.rootViewController = [[VSHiftJITViewController alloc] init];
+    self.window.rootViewController = [[VSHiftViewController alloc] init];
     [self.window makeKeyAndVisible];
     return YES;
 }
+
 @end
 
 int main(int argc, char *argv[]) {

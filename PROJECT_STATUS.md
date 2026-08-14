@@ -4,9 +4,12 @@ Date: 2026-08-14
 
 ## Current milestone
 
+The active target is now PS3. The previous PS4 work was preserved in the
+`ps4` branch and the PS5 work remains in `ps5`.
+
 Milestones 0 and 1 are complete: the JIT PoC returned `42` on the user's
-iPhone 15. Milestone 2a now has on-device SLB2 inspection, decrypted-PUP
-segment discovery, and metadata-only SELF/ELF mapping.
+iPhone 15. The current milestone is integrating RPCS3's real `rpcs3_emu`
+target and its firmware installer behind a VSHift-owned mobile frontend.
 
 ## Working
 
@@ -28,6 +31,10 @@ segment discovery, and metadata-only SELF/ELF mapping.
   branch.
 - A GitHub Actions job now packages an unsigned arm64 device IPA for the
   iLoader + StikDebug test path.
+- The upstream RPCS3 repository is pinned as `third_party/rpcs3` and its
+  `rpcs3_emu` target is connected through `core/ps3`.
+- The PS3 firmware installer uses RPCS3's PUP validation, package SELF
+  decryption, and TAR extraction to create a user-owned `dev_flash`.
 - The Apple executable-memory backend now mirrors UTM's split-W^X fallback for
   iLoader installs and uses UTM's `BRK #0x69` StikDebug hook on iOS 26/TXM.
 - Added the first real-firmware boundary: a read-only PS5 `SLB2` table parser,
@@ -62,29 +69,31 @@ segment discovery, and metadata-only SELF/ELF mapping.
 
 ## Not working yet
 
-- No PS5 SELF payload decryption or executable real-firmware segment source.
-- No guest execution from the extracted PS5 root yet.
-- No file-backed guest VFS or filesystem-image mounting inside the iOS app.
-- No block cache, HLE, GPU, audio, or input.
-- The local 12.02 test root has been extracted from user-provided firmware;
-  no firmware bytes are included in the IPA or repository.
+- The RPCS3 headless build has not yet passed VSHift's GitHub Actions build.
+- The iOS adapter still needs to connect firmware selection to installation and
+  `Emulator::BootGame("/dev_flash/vsh/module/vsh.self")`.
+- RSX presentation still needs a Metal/MoltenVK-backed callback that exposes
+  the actual XMB frame; no synthetic XMB is allowed.
+- Input, audio, haptics, persistence, media import, ISO mounting, and the
+  UTM-style control drawer are not connected to RPCS3 yet.
+- No Sony firmware or other copyrighted assets are committed or bundled.
 
 ## Current hypothesis
 
-A small native ARM64 backend plus explicit guest-memory and HLE interfaces is a
-more realistic first step than porting a desktop emulator. The iPhone test must
-validate the executable-memory/signing path before larger CPU work starts.
+The shortest credible route to a real PS3 XMB is to reuse RPCS3's existing Cell,
+LV2, firmware, VFS, and RSX implementations and replace only the desktop UI and
+host adapters. An iPhone build is still a porting task: upstream officially
+targets desktop platforms, so Actions must expose each missing mobile dependency
+instead of hiding it behind a mock screen.
 
 ## Next 5 actions
 
-1. Download the new device IPA and update the existing installation with
-   iLoader.
-2. Import the extracted firmware root on iOS and run Safe Mode preflight.
-3. Implement a file-backed guest VFS and bounded SELF payload source.
-4. Add more IR operations and a guest register/flags model while keeping the firmware parser
-   independent from CPU execution.
-5. Add a JIT-less IR interpreter for firmware and CPU experiments without
-   executable memory.
+1. Make the pinned `rpcs3_emu` build pass on the host and iOS toolchains.
+2. Expose the RPCS3 firmware installer as an iOS document-picker operation.
+3. Start `vsh.self` through the upstream `Emulator` lifecycle in headless mode.
+4. Connect the real RSX frame path to Metal and verify a captured guest frame.
+5. Add shared DualShock 3 input, audio, haptics, persistence, media import,
+   ISO mounting, and the UTM-style control drawer.
 
 ## Important commands
 
@@ -101,6 +110,7 @@ ctest --test-dir build --output-on-failure -C Release
   provides the required host and Apple toolchains.
 - iOS JIT execution depends on a valid signed entitlement and the user's
   sideload/JIT activation path.
-- Actual PS5 VSH boot still requires file-backed guest VFS, SELF payload
-  decryption/mapping, PS5 ABI/HLE, runtime linking, GPU, and input/audio work;
-  no claim of VSH support is made yet.
+- A successful source build is not the same as XMB boot. The real milestone is
+  a guest frame emitted by RPCS3's RSX/VSH path on the iPhone.
+- RPCS3's upstream CMake is desktop-oriented; the headless iOS adapter may
+  need targeted portability patches while retaining upstream core code.

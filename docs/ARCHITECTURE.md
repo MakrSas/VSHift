@@ -1,32 +1,36 @@
 # VSHift architecture
 
-Status: Milestone 0/1 plus firmware/loader foundation, 2026-08-13.
+Status: PS3 core integration started, 2026-08-14.
 
-VSHift is a new modular emulator project. It does not merge RPCSX, KytyPS5,
-SharpEmu, FEX, or Box64 into one tree. Those projects are research inputs; the
-first implementation keeps the host/platform boundary explicit.
+VSHift uses the upstream RPCS3 emulator core for PS3 instead of reimplementing
+Cell emulation. The Qt/desktop frontend is not part of the mobile target.
+VSHift owns the iOS lifecycle, presentation, input, audio, haptics, storage
+permissions, and user-facing firmware workflow.
 
 ## Runtime layers
 
 ```text
-PS5 SELF/ELF and system modules
+PS3 PUP / installed dev_flash / VSH.self
             |
      firmware + VFS
             |
-       PS5 HLE API
-            |
-  x86-64 decoder -> guest IR -> ARM64 backend
-            |                         |
-        guest memory          ExecutableMemory
-            |
-     GPU abstraction -> shader translation -> host renderer
-            |
-       iOS presentation / input / audio / haptics
+      RPCS3 rpcs3_emu
+       |       |       |
+    PPU/SPU  LV2/HLE  RSX
+       |       |       |
+       +-------+-------+
+               |
+       VSHift mobile adapters
+        |       |       |       |
+      video   input   audio  haptics
+               |
+       iOS / Metal frontend
 ```
 
 The dependency direction is deliberately one-way:
 
-- `core/cpu` must not include UIKit, Metal, Linux syscalls, or firmware data.
+- the upstream core must not include UIKit or VSHift UI state.
+- shared input/audio/haptic interfaces must not depend on PS3-specific types.
 - `ExecutableMemory` owns platform-specific executable-memory policy.
 - guest addresses are handles into a memory subsystem; they are not assumed to
   equal host pointers.
@@ -61,8 +65,8 @@ a focused test and a clear semantic definition.
 | `core/cpu/arm64_backend` | Lower IR to AArch64 | IR, executable memory |
 | `core/memory` | Guest address space and protection | platform virtual memory |
 | `core/loader` | ELF/SELF headers and mappings | memory |
-| `core/hle` | PS5-compatible services | memory, host platform adapters |
-| `gpu/` | Guest commands and shader/resource translation | memory, host renderer |
+| `core/ps3` | RPCS3 ownership, firmware install, VSH lifecycle | RPCS3 `rpcs3_emu` |
+| `core/frontend` | controller/audio/haptic contracts shared by PS3/PS4/PS5 | none |
 | `app/ios` | iOS lifecycle and presentation | core, UIKit/Metal |
 
 The IR module is intentionally still pending. The memory module now has a

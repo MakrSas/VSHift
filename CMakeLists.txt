@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(VSHIFT_BUILD_TESTS "Build host-side tests" ON)
 option(VSHIFT_BUILD_IOS "Build the iOS application target" OFF)
+option(VSHIFT_BUILD_PS3 "Build the real RPCS3 PS3 core integration" ON)
 
 add_library(vshift_core STATIC
     core/boot/ps4_boot.cpp
@@ -29,7 +30,12 @@ add_library(vshift_core STATIC
     core/firmware/pup.cpp
     core/hle/kernel.cpp
     core/video/framebuffer.cpp
+    core/frontend/media_store.cpp
 )
+
+if(VSHIFT_BUILD_PS3)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rpcs3_core.cmake)
+endif()
 
 target_include_directories(vshift_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -173,6 +179,9 @@ if(VSHIFT_BUILD_IOS)
         ${CORE_GRAPHICS_FRAMEWORK}
         ${UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK}
     )
+    if(TARGET vshift_ps3_core)
+        target_link_libraries(vshift_ios_jit_probe PRIVATE vshift_ps3_core)
+    endif()
     set_target_properties(vshift_ios_jit_probe PROPERTIES
         BUNDLE TRUE
         MACOSX_BUNDLE_GUI_IDENTIFIER org.vshift.VSHiftJITProbe
