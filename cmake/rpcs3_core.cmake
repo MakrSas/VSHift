@@ -63,6 +63,8 @@ set(RPCS3_EMU_CMAKE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/CMakeLists.txt")
 set(RPCS3_JIT_H
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/Utilities/JIT.h")
+set(RPCS3_SIMD_HPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/util/simd.hpp")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -109,6 +111,29 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     file(WRITE "${RPCS3_3RDPARTY_CMAKE}" "${RPCS3_3RDPARTY_TEXT}")
 
     file(READ "${RPCS3_EMU_CMAKE}" RPCS3_EMU_TEXT)
+    foreach(RPCS3_USB_SOURCE IN ITEMS
+        "Cell/lv2/sys_usbd.cpp"
+        "Io/Buzz.cpp"
+        "Io/Dimensions.cpp"
+        "Io/GameTablet.cpp"
+        "Io/GHLtar.cpp"
+        "Io/GunCon3.cpp"
+        "Io/Infinity.cpp"
+        "Io/KamenRider.cpp"
+        "Io/LogitechG27.cpp"
+        "Io/RB3MidiDrums.cpp"
+        "Io/RB3MidiGuitar.cpp"
+        "Io/RB3MidiKeyboard.cpp"
+        "Io/Skylander.cpp"
+        "Io/TopShotElite.cpp"
+        "Io/TopShotFearmaster.cpp"
+        "Io/Turntable.cpp"
+        "Io/usb_device.cpp"
+        "Io/usb_microphone.cpp"
+        "Io/usb_vfs.cpp"
+        "Io/usio.cpp")
+        string(REPLACE "    ${RPCS3_USB_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+    endforeach()
     string(REPLACE
         "if(NOT ANDROID AND NOT APPLE)"
         "if(NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"
@@ -127,6 +152,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\nstruct jit_write_guard"
             RPCS3_JIT_TEXT "${RPCS3_JIT_TEXT}")
         file(WRITE "${RPCS3_JIT_H}" "${RPCS3_JIT_TEXT}")
+    endif()
+
+    file(READ "${RPCS3_SIMD_HPP}" RPCS3_SIMD_TEXT)
+    if(NOT RPCS3_SIMD_TEXT MATCHES "VSHIFT_RPCS3_IOS.*vqrdmlahq_s16")
+        string(REPLACE
+            "#if defined(ARCH_ARM64)\n\treturn vqrdmlahq_s16(c, a, b);"
+            "#if defined(VSHIFT_RPCS3_IOS)\n\tv128 result{};\n\tfor (usz i = 0; i < 8; ++i)\n\t{\n\t\tconst s64 value = static_cast<s64>(a._s16[i]) * static_cast<s64>(b._s16[i]) * 2 + (static_cast<s64>(c._s16[i]) << 16) + 0x8000;\n\t\tresult._s16[i] = static_cast<s16>(std::clamp<s64>(value >> 16, -32768, 32767));\n\t}\n\treturn result;\n#elif defined(ARCH_ARM64)\n\treturn vqrdmlahq_s16(c, a, b);"
+            RPCS3_SIMD_TEXT "${RPCS3_SIMD_TEXT}")
+        file(WRITE "${RPCS3_SIMD_HPP}" "${RPCS3_SIMD_TEXT}")
     endif()
 endif()
 
@@ -165,6 +199,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 target_sources(rpcs3_emu PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/rpcs3_version.cpp")
+target_sources(rpcs3_emu PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/core/ps3/rpcs3_usb_stub.cpp")
 
 add_library(vshift_ps3_core STATIC
     "${CMAKE_CURRENT_SOURCE_DIR}/core/ps3/rpcs3_core.cpp")
