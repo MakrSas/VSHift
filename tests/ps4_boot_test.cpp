@@ -110,7 +110,7 @@ int main() {
     });
     assert(report.ok());
     assert(report.modules_mapped());
-    assert(report.stage == vshift::boot::Ps4BootStage::GuestExecution);
+    assert(report.stage == vshift::boot::Ps4BootStage::FramePresentation);
     assert(report.syscore.entry == 0x401000);
     assert(report.shellcore.entry == 0x501000);
     assert(presented);

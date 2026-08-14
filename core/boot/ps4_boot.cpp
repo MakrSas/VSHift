@@ -5,7 +5,10 @@
 #include "core/loader/elf_dynamic.h"
 #include "core/loader/self.h"
 
+#include <array>
 #include <span>
+#include <string>
+#include <unordered_set>
 #include <utility>
 
 namespace vshift::boot {
@@ -79,6 +82,50 @@ Ps4ModuleReport LoadModule(std::string_view path,
     return report;
 }
 
+bool LoadDependencies(firmware::ReadOnlyVfs& vfs,
+                      const Ps4ModuleReport& owner,
+                      memory::GuestMemory& memory,
+                      std::vector<Ps4ModuleReport>& reports,
+                      std::string& error) {
+    const std::array<std::string, 3> prefixes = {
+        "system/common/lib/",
+        "system/common/lib/kernel/",
+        "system/sys/",
+    };
+    std::unordered_set<std::string> loaded_names;
+    for (const auto& name : owner.needed_libraries) {
+        if (name.empty() || name.find_first_of("/\\") != std::string::npos ||
+            !loaded_names.insert(name).second) {
+            continue;
+        }
+
+        BootFile file;
+        std::string resolved_path;
+        for (const auto& prefix : prefixes) {
+            const auto candidate = prefix + name;
+            file = vfs.ReadFile(candidate);
+            if (file.ok()) {
+                resolved_path = candidate;
+                break;
+            }
+        }
+        if (!file.ok()) {
+            error = "required dependency is unavailable: " + name;
+            return false;
+        }
+
+        auto report = LoadModule(resolved_path, file, memory);
+        if (!report.mapped()) {
+            error = "dependency " + name + " could not be mapped: " +
+                    (report.error.empty() ? "unknown error" : report.error);
+            reports.push_back(std::move(report));
+            return false;
+        }
+        reports.push_back(std::move(report));
+    }
+    return true;
+}
+
 } // namespace
 
 Ps4BootReport Ps4BootSession::Run(const BootFileReader& read_file) {
@@ -101,19 +148,25 @@ Ps4BootReport Ps4BootSession::Run(const BootFileReader& read_file) {
         return report;
     }
 
+    if (!LoadDependencies(vfs, report.syscore, syscore_memory_,
+                          report.syscore_dependencies, report.error)) {
+        return report;
+    }
+
     report.stage = Ps4BootStage::GuestExecution;
-    hle::SyscallContext syscall_context{syscore_memory_, video_output_};
-    const auto guest = cpu::RunGuest(
+    hle::SyscallContext syscore_syscall_context{syscore_memory_,
+                                                 video_output_};
+    const auto syscore_guest = cpu::RunGuest(
         syscore_memory_, report.syscore.entry, {},
         [&](cpu::GuestRegisters& registers) {
-            return syscalls_.Dispatch(syscall_context, registers);
+            return syscalls_.Dispatch(syscore_syscall_context, registers);
         });
-    report.guest_instructions = guest.instructions;
-    report.guest_returned = guest.returned;
-    if (!guest.ok()) {
-        report.error = guest.error.empty()
+    report.guest_instructions = syscore_guest.instructions;
+    report.guest_returned = syscore_guest.returned;
+    if (!syscore_guest.ok()) {
+        report.error = syscore_guest.error.empty()
                            ? "SceSysCore guest execution stopped"
-                           : guest.error;
+                           : syscore_guest.error;
         return report;
     }
 
@@ -128,7 +181,31 @@ Ps4BootReport Ps4BootSession::Run(const BootFileReader& read_file) {
         return report;
     }
 
+    if (!LoadDependencies(vfs, report.shellcore, shellcore_memory_,
+                          report.shellcore_dependencies, report.error)) {
+        return report;
+    }
+
     report.stage = Ps4BootStage::GuestExecution;
+    hle::SyscallContext shellcore_syscall_context{shellcore_memory_,
+                                                   video_output_};
+    const auto shellcore_guest = cpu::RunGuest(
+        shellcore_memory_, report.shellcore.entry, {},
+        [&](cpu::GuestRegisters& registers) {
+            return syscalls_.Dispatch(shellcore_syscall_context, registers);
+        });
+    report.guest_instructions += shellcore_guest.instructions;
+    report.shell_guest_returned = shellcore_guest.returned;
+    report.guest_returned = report.guest_returned && shellcore_guest.returned;
+    if (!shellcore_guest.ok()) {
+        report.error = shellcore_guest.error.empty()
+                           ? "SceShellCore guest execution stopped"
+                           : shellcore_guest.error;
+        return report;
+    }
+    if (video_output_.last_frame() != nullptr) {
+        report.stage = Ps4BootStage::FramePresentation;
+    }
     return report;
 }
 

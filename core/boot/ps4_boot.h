@@ -46,8 +46,11 @@ struct Ps4BootReport final {
     Ps4BootStage stage = Ps4BootStage::None;
     Ps4ModuleReport syscore;
     Ps4ModuleReport shellcore;
+    std::vector<Ps4ModuleReport> syscore_dependencies;
+    std::vector<Ps4ModuleReport> shellcore_dependencies;
     std::uint64_t guest_instructions = 0;
     bool guest_returned = false;
+    bool shell_guest_returned = false;
     std::string error;
 
     bool ok() const noexcept { return error.empty(); }
