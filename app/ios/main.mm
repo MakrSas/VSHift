@@ -328,9 +328,9 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
     self.pickerMode = mode;
     NSArray<UTType *> *types = nil;
     if (mode == VSHiftPickerModeMedia) {
-        types = @[ UTType.audio, UTType.image, UTType.movie, UTType.data ];
+        types = @[ UTTypeAudio, UTTypeImage, UTTypeMovie, UTTypeData ];
     } else {
-        types = @[ UTType.data ];
+        types = @[ UTTypeData ];
     }
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:types asCopy:NO];
@@ -425,7 +425,10 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
     }
 
     std::filesystem::path rootPath(self.workspaceURL.path.fileSystemRepresentation);
-    __weak VSHiftViewController *weakSelf = self;
+    // The project intentionally uses manual reference counting for the
+    // sideload-friendly iOS target. The core is stopped before this controller
+    // is released, so an unsafe non-retaining capture avoids a retain cycle.
+    __unsafe_unretained VSHiftViewController *weakSelf = self;
     _core = std::make_unique<vshift::ps3::Rpcs3Core>(vshift::ps3::CoreCallbacks{
         .on_started = [weakSelf]() {
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -513,10 +516,10 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
                     @"Import failed:\n%s", report.error.c_str()];
                 return;
             }
-            self.statusLabel.text = [NSString stringWithFormat:
-                @"Imported %@ into the virtual console:\n%@",
-                MediaKindName(report.kind),
-                StringFromUTF8(report.destination.string)];
+                self.statusLabel.text = [NSString stringWithFormat:
+                    @"Imported %@ into the virtual console:\n%@",
+                    MediaKindName(report.kind),
+                StringFromUTF8(report.destination.string())];
         });
     });
 }

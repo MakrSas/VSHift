@@ -61,6 +61,8 @@ set(RPCS3_3RDPARTY_CMAKE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/CMakeLists.txt")
 set(RPCS3_EMU_CMAKE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/CMakeLists.txt")
+set(RPCS3_JIT_H
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/Utilities/JIT.h")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -114,6 +116,20 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     file(WRITE "${RPCS3_EMU_CMAKE}" "${RPCS3_EMU_TEXT}")
 endif()
 
+# RPCS3's generic Apple guard calls the macOS-only write-protect API. iOS
+# uses VSHift's signed executable-memory bridge instead; make the upstream
+# guard a no-op on iOS while preserving the macOS implementation unchanged.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    file(READ "${RPCS3_JIT_H}" RPCS3_JIT_TEXT)
+    if(NOT RPCS3_JIT_TEXT MATCHES "VSHIFT_RPCS3_IOS")
+        string(REPLACE
+            "#ifdef __APPLE__\nstruct jit_write_guard"
+            "#if defined(__APPLE__) && !defined(VSHIFT_RPCS3_IOS)\nstruct jit_write_guard"
+            RPCS3_JIT_TEXT "${RPCS3_JIT_TEXT}")
+        file(WRITE "${RPCS3_JIT_H}" "${RPCS3_JIT_TEXT}")
+    endif()
+endif()
+
 add_subdirectory(
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty"
     "${CMAKE_BINARY_DIR}/rpcs3-3rdparty"
@@ -144,6 +160,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/libusb/libusb/
 endif()
 
 target_compile_definitions(rpcs3_emu PUBLIC VSHIFT_RPCS3_HEADLESS=1)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_compile_definitions(rpcs3_emu PUBLIC VSHIFT_RPCS3_IOS=1)
+endif()
 target_sources(rpcs3_emu PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/rpcs3_version.cpp")
 
