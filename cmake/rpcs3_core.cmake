@@ -67,6 +67,8 @@ set(RPCS3_SIMD_HPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/util/simd.hpp")
 set(RPCS3_ASM_HPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/util/asm.hpp")
+set(RPCS3_CELLSYSMODULE_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/Modules/cellSysmodule.cpp")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -178,6 +180,19 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             "#elif defined(ARCH_ARM64)\n#if defined(VSHIFT_RPCS3_IOS)\n\t\t__atomic_fetch_or(static_cast<u32*>(ptr), 0u, __ATOMIC_RELAXED);\n#else\n\t\tu32 value = 0;\n\t\tu32* u32_ptr = static_cast<u32*>(ptr);\n\t\t__asm__ volatile(\"ldset %w0, %w0, %1\" : \"+r\"(value), \"=Q\"(*u32_ptr) : \"r\"(value));\n#endif"
             RPCS3_ASM_TEXT "${RPCS3_ASM_TEXT}")
         file(WRITE "${RPCS3_ASM_HPP}" "${RPCS3_ASM_TEXT}")
+    endif()
+
+    file(READ "${RPCS3_CELLSYSMODULE_CPP}" RPCS3_CELLSYSMODULE_TEXT)
+    if(RPCS3_CELLSYSMODULE_TEXT MATCHES "std::ranges::contains")
+        string(REPLACE
+            "return std::ranges::contains(std::array{ \"BLUS30003\", \"BLES00035\", \"BLES00036\" }, std::string_view{ paramsfo.get_ptr() + 1, 9 });"
+            "return std::ranges::any_of(std::array{ \"BLUS30003\", \"BLES00035\", \"BLES00036\" }, [&](const auto value) { return std::string_view{ value } == std::string_view{ paramsfo.get_ptr() + 1, 9 }; });"
+            RPCS3_CELLSYSMODULE_TEXT "${RPCS3_CELLSYSMODULE_TEXT}")
+        string(REPLACE
+            "return std::ranges::contains(std::array{ \"BLJM60012\", \"BLES00039\", \"BLUS30027\", \"BLKS20001\" }, std::string_view{ paramsfo.get_ptr() + 1, 9 });"
+            "return std::ranges::any_of(std::array{ \"BLJM60012\", \"BLES00039\", \"BLUS30027\", \"BLKS20001\" }, [&](const auto value) { return std::string_view{ value } == std::string_view{ paramsfo.get_ptr() + 1, 9 }; });"
+            RPCS3_CELLSYSMODULE_TEXT "${RPCS3_CELLSYSMODULE_TEXT}")
+        file(WRITE "${RPCS3_CELLSYSMODULE_CPP}" "${RPCS3_CELLSYSMODULE_TEXT}")
     endif()
 endif()
 
