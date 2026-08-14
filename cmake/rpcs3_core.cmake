@@ -93,8 +93,10 @@ set(RPCS3_SPUCOMMON_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp")
 set(RPCS3_CUBEB_CMAKE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/cubeb/cubeb/CMakeLists.txt")
-set(RPCS3_FFMPEG_CMAKE
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/ffmpeg/CMakeLists.txt")
+set(RPCS3_RSX_UTILS_H
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/RSX/rsx_utils.h")
+set(RPCS3_VIDEO_PROVIDER_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/util/video_provider.cpp")
 set(RPCS3_ASMJIT_VIRTMEM_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/asmjit/asmjit/src/asmjit/core/virtmem.cpp")
 set(RPCS3_NP_REQUESTS_CPP
@@ -144,17 +146,23 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         "# VSHift headless integration: use the pinned builtin FFmpeg for\n"
         "# RSX frame conversion and firmware media modules. No desktop device\n"
         "# backend is enabled by this target.\n"
-        "add_library(3rdparty_ffmpeg INTERFACE)\n"
-        "if(EXISTS \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib\" AND NOT EXISTS \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/libavformat.a\")\n"
-        "    file(REMOVE_RECURSE \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib\")\n"
-        "endif()\n"
-        "add_subdirectory(ffmpeg EXCLUDE_FROM_ALL)\n"
-        "if(EXISTS \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip\" AND NOT EXISTS \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/libavformat.a\")\n"
-        "    file(ARCHIVE_EXTRACT INPUT \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip\" DESTINATION \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg\")\n"
-        "endif()\n"
-        "target_link_libraries(3rdparty_ffmpeg INTERFACE ffmpeg)\n"
-        "target_include_directories(3rdparty_ffmpeg SYSTEM INTERFACE\n"
-        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/include\")\n\n")
+        "if(CMAKE_SYSTEM_NAME STREQUAL \"iOS\")\n"
+        "    # The first iOS boot profile uses Null RSX/audio and does not\n"
+        "    # need a desktop or macOS FFmpeg binary.\n"
+        "    add_library(3rdparty_ffmpeg INTERFACE)\n"
+        "else()\n"
+        "    add_library(3rdparty_ffmpeg INTERFACE)\n"
+        "    if(EXISTS \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib\" AND NOT EXISTS \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/libavformat.a\")\n"
+        "        file(REMOVE_RECURSE \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib\")\n"
+        "    endif()\n"
+        "    add_subdirectory(ffmpeg EXCLUDE_FROM_ALL)\n"
+        "    if(EXISTS \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip\" AND NOT EXISTS \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib/libavformat.a\")\n"
+        "        file(ARCHIVE_EXTRACT INPUT \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg.zip\" DESTINATION \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg\")\n"
+        "    endif()\n"
+        "    target_link_libraries(3rdparty_ffmpeg INTERFACE ffmpeg)\n"
+        "    target_include_directories(3rdparty_ffmpeg SYSTEM INTERFACE\n"
+        "        \"\${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/include\")\n"
+        "endif()\n\n")
     vshift_patch_rpcs3_cmake_between(
         "${RPCS3_3RDPARTY_CMAKE}" "# CURL" "# MINIUPNP"
         "# VSHift headless integration: network transport is not part of the\n"
@@ -207,6 +215,34 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         "Cell/Modules/cellGem.cpp")
         string(REPLACE "    ${RPCS3_MEDIA_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     endforeach()
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        foreach(RPCS3_IOS_FFMPEG_SOURCE IN ITEMS
+            "../util/media_utils.cpp"
+            "Cell/Modules/cellAtracXdec.cpp"
+            "Cell/Modules/cellRec.cpp"
+            "Cell/Modules/cellVdec.cpp"
+            "Cell/Modules/cellVpost.cpp"
+            "Cell/Modules/libavcdec.cpp"
+            "RSX/rsx_utils.cpp")
+            string(REPLACE "    ${RPCS3_IOS_FFMPEG_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+        endforeach()
+        string(REPLACE
+            "        3rdparty::ffmpeg\n"
+            ""
+            RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+        foreach(RPCS3_IOS_PIXEL_FILE IN ITEMS
+            "${RPCS3_RSX_UTILS_H}"
+            "${RPCS3_VIDEO_PROVIDER_CPP}")
+            file(READ "${RPCS3_IOS_PIXEL_FILE}" RPCS3_IOS_PIXEL_TEXT)
+            if(NOT RPCS3_IOS_PIXEL_TEXT MATCHES "VSHIFT_RPCS3_IOS_PIXEL_FORMATS")
+                string(REPLACE
+                    "extern \"C\"\n{\n#include <libavutil/pixfmt.h>\n}"
+                    "enum AVPixelFormat {\n    VSHIFT_RPCS3_IOS_PIXEL_FORMATS = 0,\n    AV_PIX_FMT_ARGB,\n    AV_PIX_FMT_RGB565BE,\n    AV_PIX_FMT_RGBA,\n    AV_PIX_FMT_BGRA\n};"
+                    RPCS3_IOS_PIXEL_TEXT "${RPCS3_IOS_PIXEL_TEXT}")
+                file(WRITE "${RPCS3_IOS_PIXEL_FILE}" "${RPCS3_IOS_PIXEL_TEXT}")
+            endif()
+        endforeach()
+    endif()
     string(REPLACE
         "if(NOT ANDROID AND NOT APPLE)"
         "if(NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"
@@ -306,32 +342,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             "if(USE_AUDIOUNIT AND NOT CMAKE_SYSTEM_NAME STREQUAL \"iOS\")"
             RPCS3_CUBEB_TEXT "${RPCS3_CUBEB_TEXT}")
         file(WRITE "${RPCS3_CUBEB_CMAKE}" "${RPCS3_CUBEB_TEXT}")
-    endif()
-
-    # RPCS3's bundled FFmpeg recipe uses the same Apple framework list for
-    # macOS and iOS.  The iPhoneOS SDK does not provide the macOS AudioUnit,
-    # AudioToolbox, and CoreAudio link targets used by that desktop profile;
-    # VSHift also starts with headless audio, so do not propagate them into
-    # the iOS application link.
-    file(READ "${RPCS3_FFMPEG_CMAKE}" RPCS3_FFMPEG_TEXT)
-    if(NOT RPCS3_FFMPEG_TEXT MATCHES "VSHIFT_RPCS3_IOS_AUDIO_FRAMEWORKS")
-        string(REPLACE
-            "\"-framework AudioUnit\""
-            ""
-            RPCS3_FFMPEG_TEXT "${RPCS3_FFMPEG_TEXT}")
-        string(REPLACE
-            "\"-framework AudioToolbox\""
-            ""
-            RPCS3_FFMPEG_TEXT "${RPCS3_FFMPEG_TEXT}")
-        string(REPLACE
-            "\"-framework CoreAudio\""
-            ""
-            RPCS3_FFMPEG_TEXT "${RPCS3_FFMPEG_TEXT}")
-        string(REPLACE
-            "elseif (APPLE)\n"
-            "elseif (APPLE)\n\t# VSHIFT_RPCS3_IOS_AUDIO_FRAMEWORKS\n"
-            RPCS3_FFMPEG_TEXT "${RPCS3_FFMPEG_TEXT}")
-        file(WRITE "${RPCS3_FFMPEG_CMAKE}" "${RPCS3_FFMPEG_TEXT}")
     endif()
 
     file(READ "${RPCS3_THREAD_CPP}" RPCS3_THREAD_TEXT)
@@ -514,6 +524,8 @@ target_sources(rpcs3_emu PRIVATE
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(rpcs3_emu PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/app/ios/rpcs3_ios_input_bridge.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/ps3/rpcs3_ios_media_stub.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/ps3/rpcs3_ios_rsx_utils_stub.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Input/product_info.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Input/ps_move_config.cpp")
     target_link_libraries(rpcs3_emu PUBLIC iconv)
