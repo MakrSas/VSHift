@@ -65,6 +65,8 @@ set(RPCS3_JIT_H
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/Utilities/JIT.h")
 set(RPCS3_SIMD_HPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/util/simd.hpp")
+set(RPCS3_ASM_HPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/util/asm.hpp")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -134,6 +136,12 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         "Io/usio.cpp")
         string(REPLACE "    ${RPCS3_USB_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     endforeach()
+    foreach(RPCS3_NETWORK_SOURCE IN ITEMS
+        "NP/clans_client.cpp"
+        "NP/np_requests.cpp"
+        "Cell/Modules/sceNpClans.cpp")
+        string(REPLACE "    ${RPCS3_NETWORK_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+    endforeach()
     string(REPLACE
         "if(NOT ANDROID AND NOT APPLE)"
         "if(NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"
@@ -161,6 +169,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             "#if defined(VSHIFT_RPCS3_IOS)\n\tv128 result{};\n\tfor (usz i = 0; i < 8; ++i)\n\t{\n\t\tconst s64 value = static_cast<s64>(a._s16[i]) * static_cast<s64>(b._s16[i]) * 2 + (static_cast<s64>(c._s16[i]) << 16) + 0x8000;\n\t\tresult._s16[i] = static_cast<s16>(std::clamp<s64>(value >> 16, -32768, 32767));\n\t}\n\treturn result;\n#elif defined(ARCH_ARM64)\n\treturn vqrdmlahq_s16(c, a, b);"
             RPCS3_SIMD_TEXT "${RPCS3_SIMD_TEXT}")
         file(WRITE "${RPCS3_SIMD_HPP}" "${RPCS3_SIMD_TEXT}")
+    endif()
+
+    file(READ "${RPCS3_ASM_HPP}" RPCS3_ASM_TEXT)
+    if(NOT RPCS3_ASM_TEXT MATCHES "VSHIFT_RPCS3_IOS.*__atomic_fetch_or")
+        string(REPLACE
+            "#elif defined(ARCH_ARM64)\n\t\tu32 value = 0;\n\t\tu32* u32_ptr = static_cast<u32*>(ptr);\n\t\t__asm__ volatile(\"ldset %w0, %w0, %1\" : \"+r\"(value), \"=Q\"(*u32_ptr) : \"r\"(value));"
+            "#elif defined(ARCH_ARM64)\n#if defined(VSHIFT_RPCS3_IOS)\n\t\t__atomic_fetch_or(static_cast<u32*>(ptr), 0u, __ATOMIC_RELAXED);\n#else\n\t\tu32 value = 0;\n\t\tu32* u32_ptr = static_cast<u32*>(ptr);\n\t\t__asm__ volatile(\"ldset %w0, %w0, %1\" : \"+r\"(value), \"=Q\"(*u32_ptr) : \"r\"(value));\n#endif"
+            RPCS3_ASM_TEXT "${RPCS3_ASM_TEXT}")
+        file(WRITE "${RPCS3_ASM_HPP}" "${RPCS3_ASM_TEXT}")
     endif()
 endif()
 
