@@ -219,6 +219,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             RPCS3_NP_REQUESTS_TEXT "${RPCS3_NP_REQUESTS_TEXT}")
         file(WRITE "${RPCS3_NP_REQUESTS_CPP}" "${RPCS3_NP_REQUESTS_TEXT}")
     endif()
+    file(READ "${RPCS3_NP_REQUESTS_CPP}" RPCS3_NP_REQUESTS_TEXT)
+    if(NOT RPCS3_NP_REQUESTS_TEXT MATCHES "VSHIFT_RPCS3_IOS_CLANS_SERVICE_ID")
+        string(REPLACE
+            "// VSHIFT_RPCS3_IOS_NO_CLANS\n"
+            "// VSHIFT_RPCS3_IOS_NO_CLANS\n#define VSHIFT_RPCS3_IOS_CLANS_SERVICE_ID \"IV0001-NPXS01001_00\"\n#define CLANS_SERVICE_ID VSHIFT_RPCS3_IOS_CLANS_SERVICE_ID\n"
+            RPCS3_NP_REQUESTS_TEXT "${RPCS3_NP_REQUESTS_TEXT}")
+        file(WRITE "${RPCS3_NP_REQUESTS_CPP}" "${RPCS3_NP_REQUESTS_TEXT}")
+    endif()
 
     # AsmJit's Apple instruction-cache helper is macOS-only.  On iOS the
     # SDK exposes __builtin___clear_cache instead, so let the generic GCC/Clang
