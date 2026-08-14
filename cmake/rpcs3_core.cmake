@@ -88,6 +88,11 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         "# FFmpeg installation while the VSH boot path is brought up.\n"
         "add_library(3rdparty_ffmpeg INTERFACE)\n"
         "target_compile_definitions(3rdparty_ffmpeg INTERFACE VSHIFT_RPCS3_NO_HOST_MEDIA=1)\n\n")
+    vshift_patch_rpcs3_cmake_between(
+        "${RPCS3_3RDPARTY_CMAKE}" "# CURL" "# MINIUPNP"
+        "# VSHift headless integration: network transport is not part of the\n"
+        "# firmware boot boundary. A later frontend adapter can provide it.\n"
+        "add_library(3rdparty_libcurl INTERFACE)\n\n")
     file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
     string(REPLACE
         "if (NOT ANDROID AND NOT APPLE)"
@@ -105,13 +110,6 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         "if(NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"
         RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     file(WRITE "${RPCS3_EMU_CMAKE}" "${RPCS3_EMU_TEXT}")
-endif()
-
-# The headless dependency patch normally creates this optional target. Keep a
-# fallback for incremental configure directories where the patch already ran
-# but the target was not created by an older configure.
-if(NOT TARGET 3rdparty_ffmpeg)
-    add_library(3rdparty_ffmpeg INTERFACE)
 endif()
 
 add_subdirectory(
