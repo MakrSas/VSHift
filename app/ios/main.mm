@@ -1,13 +1,12 @@
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-#include "core/boot/ps3_runtime.h"
+#include "cores/ps3/ps3_core.h"
 #include "core/firmware/ps3_package.h"
 #include "core/firmware/ps3_pup.h"
 #include "core/firmware/ps3_tar.h"
 #include "core/loader/ps3_sce.h"
 #include "core/loader/ps3_self.h"
-#include "core/cpu/ppu_runtime.h"
 
 #include <algorithm>
 #include <array>
@@ -218,7 +217,7 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
 @end
 
 @interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate> {
-    vshift::boot::Ps3Runtime *_ps3Runtime;
+    vshift::ps3::PS3Core *_ps3Core;
 }
 @property(nonatomic, strong) UIScrollView *scrollView;
 @property(nonatomic, strong) UIStackView *contentStack;
@@ -247,8 +246,8 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
 @implementation VSHiftJITViewController
 
 - (void)dealloc {
-    delete _ps3Runtime;
-    _ps3Runtime = nullptr;
+    delete _ps3Core;
+    _ps3Core = nullptr;
 #if !__has_feature(objc_arc)
     [super dealloc];
 #endif
@@ -904,8 +903,8 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
     self.activePs3Machine[@"status"] = @"Starting";
     self.activePs3Machine[@"last_result"] = @"Starting PS3 runtime…";
     [self savePs3Machines];
-    delete _ps3Runtime;
-    _ps3Runtime = nullptr;
+    delete _ps3Core;
+    _ps3Core = nullptr;
 
     VSHiftDisplayViewController *display = [[VSHiftDisplayViewController alloc] init];
     display.modalPresentationStyle = UIModalPresentationFullScreen;
@@ -980,14 +979,20 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
 }
 
 - (void)handlePS3RuntimePowerRequest {
-    if (_ps3Runtime != nullptr) _ps3Runtime->Stop();
+    if (_ps3Core != nullptr) _ps3Core->shutdown();
     self.activePs3Machine[@"status"] = @"Stopped";
     self.activePs3Machine[@"last_result"] = @"Virtual console powered off.";
     [self savePs3Machines];
 }
 
 - (void)handlePS3RuntimePauseRequest:(BOOL)paused {
-    if (_ps3Runtime != nullptr) _ps3Runtime->Pause(paused);
+    if (_ps3Core != nullptr) {
+        if (paused) {
+            _ps3Core->pause();
+        } else {
+            _ps3Core->resume();
+        }
+    }
     self.activePs3Machine[@"status"] = paused ? @"Paused" : @"Running";
     [self savePs3Machines];
 }
@@ -1163,40 +1168,36 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
         return;
     }
 
-    _ps3Runtime = new vshift::boot::Ps3Runtime();
-    const auto runtimeLoaded = _ps3Runtime->LoadFirmware(
-        std::span<const std::uint8_t>(pupBytes, pupData.length));
-    if (!runtimeLoaded.ok()) {
+    _ps3Core = new vshift::ps3::PS3Core();
+    const auto initialized = _ps3Core->initialize();
+    const auto installed = initialized.success
+        ? _ps3Core->installFirmware(std::span<const std::uint8_t>(pupBytes, pupData.length))
+        : initialized;
+    if (!installed.success) {
         [self setPS3DisplayStatus:[NSString stringWithFormat:
-            @"PS3 runtime load failed:\n%s", runtimeLoaded.error.c_str()]];
+            @"PS3 core firmware install failed:\n%s", installed.message.c_str()]];
         self.activePs3Machine[@"status"] = @"Runtime load failed";
         self.activePs3Machine[@"last_result"] = [NSString stringWithUTF8String:
-            runtimeLoaded.error.c_str()];
+            installed.message.c_str()];
         [self savePs3Machines];
         return;
     }
-    const auto ppuResult = _ps3Runtime->Run(100000);
-    NSString *ppuReason = @"unknown";
-    switch (ppuResult.reason) {
-    case vshift::cpu::PpuStopReason::Syscall:
-        ppuReason = @"LV2 syscall";
-        break;
-    case vshift::cpu::PpuStopReason::StepLimit:
-        ppuReason = @"step limit";
-        break;
-    case vshift::cpu::PpuStopReason::UnsupportedInstruction:
-        ppuReason = @"unsupported PPU instruction";
-        break;
-    case vshift::cpu::PpuStopReason::MemoryFault:
-        ppuReason = @"PPU memory fault";
-        break;
-    case vshift::cpu::PpuStopReason::Halted:
-        ppuReason = @"PPU halted";
-        break;
+    const auto booted = _ps3Core->boot();
+    const auto coreStatus = _ps3Core->status();
+    if (!booted.success) {
+        [self setPS3DisplayStatus:[NSString stringWithFormat:
+            @"PS3 boot stopped:\n%s", booted.message.c_str()]];
+        self.activePs3Machine[@"status"] = @"PS3 boot stopped";
+        self.activePs3Machine[@"last_result"] = [NSString stringWithUTF8String:
+            booted.message.c_str()];
+        [self savePs3Machines];
+        return;
     }
-    const std::size_t ppuInstructions = ppuResult.instructions;
-    const std::uint64_t ppuPC = ppuResult.registers.pc;
-    const std::uint64_t ppuSyscall = ppuResult.registers.gpr[11];
+    NSString *ppuReason = [NSString stringWithUTF8String:coreStatus.stop_reason.c_str()];
+    if (ppuReason.length == 0) ppuReason = @"unknown";
+    const std::size_t ppuInstructions = coreStatus.instructions;
+    const std::uint64_t ppuPC = coreStatus.pc;
+    const std::uint64_t ppuSyscall = coreStatus.register11;
 
     NSString *version = [self machineValue:self.activePs3Machine key:@"firmware_version" fallback:@"unknown"];
     NSError *manifestError = nil;

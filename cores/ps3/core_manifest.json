@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "ps3",
+  "displayName": "PlayStation 3",
+  "manufacturer": "Sony",
+  "firmwareRequirement": "PS3UPDAT.PUP",
+  "firmwareExtensions": ["PUP"],
+  "mediaTypes": ["disc"],
+  "inputLayout": ["DPad", "LeftStick", "RightStick", "Cross", "Circle", "Square", "Triangle", "L1", "L2", "R1", "R2", "L3", "R3", "Start", "Select", "PS"],
+  "capabilities": ["FirmwareInstall", "Boot", "Pause", "Reset", "Shutdown"],
+  "storageTypes": ["dev_flash", "hdd"],
+  "systemUI": "XMB"
+}

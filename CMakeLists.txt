@@ -54,6 +54,31 @@ if(APPLE)
     target_compile_definitions(vshift_core PRIVATE VSHIFT_APPLE=1)
 endif()
 
+# Stable boundaries for the application and independently-developed console
+# cores. The existing vshift_core remains the PS3 implementation layer during
+# this incremental migration; consumers should depend on the PS3Core wrapper.
+add_library(vshift_core_api INTERFACE)
+target_include_directories(vshift_core_api INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+add_library(vshift_platform INTERFACE)
+target_include_directories(vshift_platform INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+add_library(vshift_ps3_core STATIC
+    cores/ps3/ps3_core.cpp
+)
+target_include_directories(vshift_ps3_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(vshift_ps3_core PUBLIC
+    vshift_core
+    vshift_core_api
+    vshift_platform
+)
+
 if(VSHIFT_BUILD_TESTS)
     enable_testing()
 
@@ -116,6 +141,11 @@ if(VSHIFT_BUILD_TESTS)
         tests/ps3_crypto_test.cpp
     )
     target_link_libraries(vshift_ps3_crypto_test PRIVATE vshift_core)
+
+    add_executable(vshift_ps3_core_test
+        tests/ps3_core_test.cpp
+    )
+    target_link_libraries(vshift_ps3_core_test PRIVATE vshift_ps3_core)
 
     add_executable(vshift_catalog_test
         tests/catalog_test.cpp
@@ -184,6 +214,7 @@ if(VSHIFT_BUILD_TESTS)
     add_test(NAME vshift_ppu_runtime_test COMMAND vshift_ppu_runtime_test)
     add_test(NAME vshift_ps3_lv2_test COMMAND vshift_ps3_lv2_test)
     add_test(NAME vshift_ps3_crypto_test COMMAND vshift_ps3_crypto_test)
+    add_test(NAME vshift_ps3_core_test COMMAND vshift_ps3_core_test)
     add_test(NAME vshift_catalog_test COMMAND vshift_catalog_test)
     add_test(NAME vshift_elf_test COMMAND vshift_elf_test)
     add_test(NAME vshift_guest_memory_test COMMAND vshift_guest_memory_test)
@@ -232,7 +263,7 @@ if(VSHIFT_BUILD_IOS)
     find_library(QUARTZ_CORE_FRAMEWORK QuartzCore REQUIRED)
     find_library(UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK UniformTypeIdentifiers REQUIRED)
     target_link_libraries(vshift_ios_jit_probe PRIVATE
-        vshift_core
+        vshift_ps3_core
         ${UIKIT_FRAMEWORK}
         ${FOUNDATION_FRAMEWORK}
         ${CORE_GRAPHICS_FRAMEWORK}
