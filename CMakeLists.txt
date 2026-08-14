@@ -19,6 +19,7 @@ add_library(vshift_core STATIC
     core/loader/elf.cpp
     core/loader/elf_loader.cpp
     core/loader/self.cpp
+    core/loader/self_loader.cpp
     core/firmware/catalog.cpp
     core/firmware/slb2.cpp
     core/firmware/pup.cpp

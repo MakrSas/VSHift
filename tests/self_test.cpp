@@ -1,7 +1,12 @@
 #include "core/loader/self.h"
+#include "core/loader/self_loader.h"
+#include "core/memory/guest_memory.h"
 
+#include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace {
@@ -133,6 +138,38 @@ int main() {
         vshift::loader::ParseSelfHeaders(header, kFileSize);
     assert(dispatched.ok());
     assert(dispatched.platform == vshift::loader::SelfPlatform::Ps4);
+
+    std::vector<std::uint8_t> plain_self(kFileSize, 0);
+    std::copy(header.begin(), header.end(), plain_self.begin());
+    WriteU32LE(plain_self, 0x00, vshift::loader::kPs4SelfMagic);
+    for (std::size_t index = 0; index < 3; ++index) {
+        WriteU64LE(plain_self, 0x20 + index * 0x20, 0x100001);
+    }
+    for (std::size_t index = 0; index < 0x2000; ++index) {
+        plain_self[0xBA0 + index] = static_cast<std::uint8_t>(index);
+    }
+    for (std::size_t index = 0; index < 0x3000; ++index) {
+        plain_self[0x3BA0 + index] = static_cast<std::uint8_t>(index ^ 0x5a);
+    }
+    const auto plain_headers = vshift::loader::ParsePs4SelfHeaders(
+        std::span<const std::uint8_t>(plain_self.data(), header.size()),
+        kFileSize);
+    assert(plain_headers.ok());
+    vshift::memory::GuestMemory guest_memory;
+    const auto plain_loaded = vshift::loader::MapSelfLoadSegments(
+        plain_headers, plain_self, guest_memory);
+    assert(plain_loaded.ok());
+    assert(plain_loaded.entry == 0x400080);
+    assert(plain_loaded.mappings.size() == 2);
+    std::array<std::uint8_t, 4> mapped_bytes = {};
+    assert(guest_memory.Read(0x400000, mapped_bytes).ok());
+    assert(mapped_bytes[0] == 0x00);
+    assert(mapped_bytes[1] == 0x01);
+
+    const auto protected_loaded = vshift::loader::MapSelfLoadSegments(
+        ps4, plain_self, guest_memory);
+    assert(!protected_loaded.ok());
+    assert(protected_loaded.error.find("encrypted") != std::string::npos);
 
     WriteU32LE(header, 0x00, 0x12345678);
     assert(!vshift::loader::ParseSelfHeaders(header, kFileSize).ok());
