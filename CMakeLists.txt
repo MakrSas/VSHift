@@ -26,6 +26,7 @@ add_library(vshift_core STATIC
     core/firmware/vfs.cpp
     core/firmware/slb2.cpp
     core/firmware/pup.cpp
+    core/hle/kernel.cpp
     core/video/framebuffer.cpp
 )
 
@@ -117,6 +118,11 @@ if(VSHIFT_BUILD_TESTS)
     )
     target_link_libraries(vshift_framebuffer_test PRIVATE vshift_core)
 
+    add_executable(vshift_hle_test
+        tests/hle_test.cpp
+    )
+    target_link_libraries(vshift_hle_test PRIVATE vshift_core)
+
     add_test(NAME vshift_jit_smoke COMMAND vshift_jit_smoke)
     add_test(NAME vshift_ir_test COMMAND vshift_ir_test)
     add_test(NAME vshift_differential_test COMMAND vshift_differential_test)
@@ -132,6 +138,7 @@ if(VSHIFT_BUILD_TESTS)
     add_test(NAME vshift_x86_runtime_test COMMAND vshift_x86_runtime_test)
     add_test(NAME vshift_vfs_test COMMAND vshift_vfs_test)
     add_test(NAME vshift_framebuffer_test COMMAND vshift_framebuffer_test)
+    add_test(NAME vshift_hle_test COMMAND vshift_hle_test)
 endif()
 
 add_executable(vshift_firmware_inspect

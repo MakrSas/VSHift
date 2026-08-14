@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/firmware/vfs.h"
+#include "core/hle/kernel.h"
 #include "core/loader/self_loader.h"
 #include "core/video/framebuffer.h"
 
@@ -61,6 +62,11 @@ public:
 
     Ps4BootReport Run(const BootFileReader& read_file);
 
+    hle::SyscallDispatcher& syscalls() noexcept { return syscalls_; }
+    const hle::SyscallDispatcher& syscalls() const noexcept {
+        return syscalls_;
+    }
+
     video::FrameBuffer& video_output() noexcept { return video_output_; }
     const video::FrameBuffer& video_output() const noexcept {
         return video_output_;
@@ -77,6 +83,7 @@ private:
     memory::GuestMemory syscore_memory_;
     memory::GuestMemory shellcore_memory_;
     video::FrameBuffer video_output_;
+    hle::SyscallDispatcher syscalls_;
 };
 
 } // namespace vshift::boot

@@ -93,7 +93,12 @@ Ps4BootReport Ps4BootSession::Run(const BootFileReader& read_file) {
     }
 
     report.stage = Ps4BootStage::GuestExecution;
-    const auto guest = cpu::RunGuest(syscore_memory_, report.syscore.entry);
+    hle::SyscallContext syscall_context{syscore_memory_, video_output_};
+    const auto guest = cpu::RunGuest(
+        syscore_memory_, report.syscore.entry, {},
+        [&](cpu::GuestRegisters& registers) {
+            return syscalls_.Dispatch(syscall_context, registers);
+        });
     report.guest_instructions = guest.instructions;
     report.guest_returned = guest.returned;
     if (!guest.ok()) {
