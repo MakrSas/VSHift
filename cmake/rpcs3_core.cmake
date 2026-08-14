@@ -209,7 +209,6 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         string(REPLACE "    ${RPCS3_NETWORK_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     endforeach()
     foreach(RPCS3_MEDIA_SOURCE IN ITEMS
-        "Cell/Modules/cellDmuxPamf.cpp"
         "Cell/Modules/cellMic.cpp"
         "Cell/Modules/cellAvconfExt.cpp"
         "Cell/Modules/cellGem.cpp")

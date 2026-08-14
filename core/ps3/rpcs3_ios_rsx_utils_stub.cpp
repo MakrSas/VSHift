@@ -7,6 +7,18 @@ namespace rsx {
 
 atomic_t<u64> g_rsx_shared_tag{0};
 
+avconf::avconf() noexcept {
+    switch (g_cfg.video.aspect_ratio) {
+    default:
+    case video_aspect::_16_9:
+        aspect = CELL_VIDEO_OUT_ASPECT_16_9;
+        break;
+    case video_aspect::_4_3:
+        aspect = CELL_VIDEO_OUT_ASPECT_4_3;
+        break;
+    }
+}
+
 void convert_scale_image(u8* /*dst*/, AVPixelFormat /*dst_format*/,
                          int /*dst_width*/, int /*dst_height*/, int /*dst_pitch*/,
                          const u8* /*src*/, AVPixelFormat /*src_format*/,

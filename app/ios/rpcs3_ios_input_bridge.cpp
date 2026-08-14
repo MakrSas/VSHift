@@ -44,6 +44,13 @@ void spu_llvm_set_compile_context(spu_llvm_compile_context* /*context*/) noexcep
 	// recompiler interface, so provide the no-LLVM context boundary here.
 }
 
+bool check_if_vdec_contexts_exist()
+{
+	// cellVdec is outside the first iOS headless media profile.  System.cpp
+	// still queries this lifecycle hook while shutting down the emulator.
+	return false;
+}
+
 template <>
 void fmt_class_string<CellAudioInError>::format(std::string& out, u64 arg)
 {
