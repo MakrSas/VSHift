@@ -69,6 +69,8 @@ set(RPCS3_ASM_HPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/util/asm.hpp")
 set(RPCS3_CELLSYSMODULE_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/Modules/cellSysmodule.cpp")
+set(RPCS3_PPUMODULE_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/PPUModule.cpp")
 set(RPCS3_CELLMIC_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/Modules/cellMic.cpp")
 set(RPCS3_CELLMIC_H
@@ -170,25 +172,12 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         string(REPLACE "    ${RPCS3_NETWORK_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     endforeach()
     foreach(RPCS3_MEDIA_SOURCE IN ITEMS
-        "../util/media_utils.cpp"
-        "Cell/Modules/cellAtracXdec.cpp"
-        "Cell/Modules/cellVdec.cpp"
-        "Cell/Modules/cellVpost.cpp"
-        "RSX/rsx_utils.cpp")
+        "Cell/Modules/cellDmuxPamf.cpp"
+        "Cell/Modules/cellMic.cpp"
+        "Cell/Modules/cellAvconfExt.cpp"
+        "Cell/Modules/cellGem.cpp")
         string(REPLACE "    ${RPCS3_MEDIA_SOURCE}\n" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     endforeach()
-    string(REPLACE
-        "    Cell/Modules/cellMic.cpp\n"
-        ""
-        RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
-    # Video demuxing is not part of the first VSH boot boundary.  The module
-    # pulls in the host media pipeline and uses C++23 ranges facilities that
-    # are not available in Apple's device libc++ yet.  Keep it for the later
-    # media/audio milestone instead of making the device core depend on it.
-    string(REPLACE
-        "    Cell/Modules/cellDmuxPamf.cpp\n"
-        ""
-        RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
     string(REPLACE
         "if(NOT ANDROID AND NOT APPLE)"
         "if(NOT VSHIFT_RPCS3_HEADLESS AND NOT APPLE)"
@@ -209,6 +198,29 @@ endif()
 # uses VSHift's signed executable-memory bridge instead; make the upstream
 # guard a no-op on iOS while preserving the macOS implementation unchanged.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # The first iOS profile omits desktop-only modules above.  Keep the
+    # upstream module table internally consistent so the static linker does
+    # not retain references to those unavailable implementations.
+    file(READ "${RPCS3_PPUMODULE_CPP}" RPCS3_PPU_MODULE_TEXT)
+    if(NOT RPCS3_PPU_MODULE_TEXT MATCHES "VSHIFT_RPCS3_IOS_MODULE_TABLE")
+        foreach(RPCS3_IOS_OMITTED_MODULE IN ITEMS
+            "cellAvconfExt"
+            "cellDmuxPamf"
+            "cellGem"
+            "cellMic"
+            "sceNpClans")
+            string(REPLACE
+                "\t\t&ppu_module_manager::${RPCS3_IOS_OMITTED_MODULE},\n"
+                ""
+                RPCS3_PPU_MODULE_TEXT "${RPCS3_PPU_MODULE_TEXT}")
+        endforeach()
+        string(REPLACE
+            "#include \"stdafx.h\"\n"
+            "#include \"stdafx.h\"\n// VSHIFT_RPCS3_IOS_MODULE_TABLE\n"
+            RPCS3_PPU_MODULE_TEXT "${RPCS3_PPU_MODULE_TEXT}")
+        file(WRITE "${RPCS3_PPUMODULE_CPP}" "${RPCS3_PPU_MODULE_TEXT}")
+    endif()
+
     # np_requests.cpp does not use the clans implementation, but upstream
     # includes its header unconditionally.  That header pulls desktop-only
     # libcurl headers into the iOS core even though clans is excluded here.
