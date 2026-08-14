@@ -10,9 +10,9 @@ endif()
 enable_language(C)
 
 # The upstream root project sets this while entering its own CMake tree. We
-# enter at the 3rdparty/Emu boundary instead, so provide the same value for
-# dependencies which test it during configure.
-set(CMAKE_MINIMUM_REQUIRED_VERSION 3.28)
+# enter at the 3rdparty/Emu boundary instead, so establish the same policy
+# version for dependencies which test it during configure.
+cmake_minimum_required(VERSION 3.28)
 
 # The upstream root normally generates this header after adding `Emu`. Keep
 # generated files out of the submodule checkout while still compiling the
