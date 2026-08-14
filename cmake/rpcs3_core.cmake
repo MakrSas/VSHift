@@ -93,6 +93,8 @@ set(RPCS3_CUBEB_CMAKE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/cubeb/cubeb/CMakeLists.txt")
 set(RPCS3_ASMJIT_VIRTMEM_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/asmjit/asmjit/src/asmjit/core/virtmem.cpp")
+set(RPCS3_NP_REQUESTS_CPP
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/NP/np_requests.cpp")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -202,6 +204,22 @@ endif()
 # uses VSHift's signed executable-memory bridge instead; make the upstream
 # guard a no-op on iOS while preserving the macOS implementation unchanged.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # np_requests.cpp does not use the clans implementation, but upstream
+    # includes its header unconditionally.  That header pulls desktop-only
+    # libcurl headers into the iOS core even though clans is excluded here.
+    file(READ "${RPCS3_NP_REQUESTS_CPP}" RPCS3_NP_REQUESTS_TEXT)
+    if(NOT RPCS3_NP_REQUESTS_TEXT MATCHES "VSHIFT_RPCS3_IOS_NO_CLANS")
+        string(REPLACE
+            "#include \"Emu/NP/clans_client.h\"\n"
+            "// VSHIFT_RPCS3_IOS_NO_CLANS: clans is a later network adapter.\n"
+            RPCS3_NP_REQUESTS_TEXT "${RPCS3_NP_REQUESTS_TEXT}")
+        string(REPLACE
+            "#include \"stdafx.h\"\n"
+            "#include \"stdafx.h\"\n// VSHIFT_RPCS3_IOS_NO_CLANS\n"
+            RPCS3_NP_REQUESTS_TEXT "${RPCS3_NP_REQUESTS_TEXT}")
+        file(WRITE "${RPCS3_NP_REQUESTS_CPP}" "${RPCS3_NP_REQUESTS_TEXT}")
+    endif()
+
     # AsmJit's Apple instruction-cache helper is macOS-only.  On iOS the
     # SDK exposes __builtin___clear_cache instead, so let the generic GCC/Clang
     # path handle the flush rather than referencing sys_icache_invalidate().
