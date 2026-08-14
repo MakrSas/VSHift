@@ -160,6 +160,11 @@ BootReport Rpcs3Core::StartVsh(
     report.emulator_directory = emulator_directory;
 
 #if defined(VSHIFT_HAS_RPCS3_CORE)
+    if (emulator_directory.empty()) {
+        report.error = "RPCS3 emulator directory is empty";
+        return report;
+    }
+
     std::unique_lock lifecycle_lock(lifecycle_mutex_);
     if (running_.load(std::memory_order_acquire) || initialized_) {
         report.error = "RPCS3 VSH is already initialized";
@@ -192,10 +197,20 @@ BootReport Rpcs3Core::StartVsh(
     // re-apply the mobile sandbox root before remounting the guest devices.
     g_cfg_vfs.emulator_dir.set(emulator_root);
 
-    std::filesystem::create_directories(emulator_directory / "dev_hdd0", ec);
-    std::filesystem::create_directories(emulator_directory / "dev_hdd1", ec);
-    std::filesystem::create_directories(emulator_directory / "dev_bdvd", ec);
-    std::filesystem::create_directories(emulator_directory / "dev_usb000", ec);
+    for (const auto& device_directory : {
+             emulator_directory / "dev_hdd0",
+             emulator_directory / "dev_hdd1",
+             emulator_directory / "dev_bdvd",
+             emulator_directory / "dev_usb000"}) {
+        ec.clear();
+        std::filesystem::create_directories(device_directory, ec);
+        if (ec) {
+            report.error = "Could not create RPCS3 device directory: " +
+                           ec.message();
+            Emu.Kill(false);
+            return report;
+        }
+    }
 
     vfs::unmount("/dev_flash");
     vfs::unmount("/dev_flash2");
@@ -217,12 +232,25 @@ BootReport Rpcs3Core::StartVsh(
     report.stage = BootStage::RuntimeInitialized;
     report.stage = BootStage::FirmwareReady;
 
+    const auto vsh_path = emulator_directory / "dev_flash" / "vsh" /
+                          "module" / "vsh.self";
+    if (!std::filesystem::is_regular_file(vsh_path, ec)) {
+        report.error = ec ? "Cannot inspect the installed PS3 VSH: " +
+                                 ec.message()
+                          : "Installed PS3 firmware has no vsh.self";
+        Emu.Kill(false);
+        initialized_ = false;
+        return report;
+    }
+
     const auto boot_result = Emu.BootGame(
         "/dev_flash/vsh/module/vsh.self", "", true);
     if (boot_result != game_boot_result::no_errors) {
         report.error = "RPCS3 VSH boot failed (game_boot_result=";
         report.error += std::to_string(static_cast<std::uint32_t>(boot_result));
         report.error += ")";
+        Emu.Kill(false);
+        initialized_ = false;
         return report;
     }
 

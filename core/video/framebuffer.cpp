@@ -90,6 +90,10 @@ FrameResult FrameBuffer::CopyFromGuest(
     for (std::uint32_t row = 0; row < description.height; ++row) {
         const auto row_offset = static_cast<std::uint64_t>(
             row) * description.bytes_per_row;
+        if (row_offset > std::numeric_limits<std::uint64_t>::max() -
+                             guest_address) {
+            return {"guest framebuffer address overflows"};
+        }
         const auto read = memory.Read(
             guest_address + row_offset,
             std::span<std::uint8_t>(

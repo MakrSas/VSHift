@@ -6,6 +6,7 @@
 #include "core/ps3/rpcs3_core.h"
 
 #include <filesystem>
+#include <exception>
 #include <memory>
 #include <string>
 
@@ -373,7 +374,15 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
 }
 
 - (void)installFirmwareAtURL:(NSURL *)url {
+    if (self.coreOperationInFlight || (_core && _core->running())) {
+        self.statusLabel.text = @"Stop the PS3 core before reinstalling firmware.";
+        return;
+    }
     if (!self.workspaceURL) {
+        return;
+    }
+    if (url.path.length == 0) {
+        self.statusLabel.text = @"The selected firmware URL is invalid.";
         return;
     }
     NSError *workspaceError = nil;
@@ -387,14 +396,24 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
     std::filesystem::path rootPath(workspace.path.fileSystemRepresentation);
     self.statusLabel.text = @"Installing PS3 firmware with RPCS3 PUP/SELF/TAR code…";
     self.startButton.enabled = NO;
+    self.coreOperationInFlight = YES;
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         vshift::ps3::Rpcs3FirmwareInstaller installer;
-        const auto report = installer.Install(pupPath, rootPath);
+        vshift::ps3::FirmwareInstallReport report;
+        try {
+            report = installer.Install(pupPath, rootPath);
+        } catch (const std::exception &exception) {
+            report.error = std::string("Firmware installer exception: ") +
+                           exception.what();
+        } catch (...) {
+            report.error = "Firmware installer raised an unknown exception";
+        }
         if (accessed) {
             [url stopAccessingSecurityScopedResource];
         }
         dispatch_async(dispatch_get_main_queue(), ^{
+            self.coreOperationInFlight = NO;
             if (!report.ok()) {
                 self.statusLabel.text = [NSString stringWithFormat:
                     @"PS3 firmware install failed:\n%s", report.error.c_str()];
@@ -464,7 +483,15 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
     self.startButton.enabled = NO;
     self.coreOperationInFlight = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        const auto report = core->StartVsh(rootPath);
+        vshift::ps3::BootReport report;
+        try {
+            report = core->StartVsh(rootPath);
+        } catch (const std::exception &exception) {
+            report.error = std::string("RPCS3 start exception: ") +
+                           exception.what();
+        } catch (...) {
+            report.error = "RPCS3 start raised an unknown exception";
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             VSHiftViewController *strongSelf = weakSelf;
             if (!strongSelf) return;
@@ -492,7 +519,12 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
     self.statusLabel.text = @"Stopping RPCS3…";
     self.coreOperationInFlight = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        core->Stop();
+        try {
+            core->Stop();
+        } catch (...) {
+            // The shared core is released below; surface a clean UI state
+            // even if an upstream shutdown hook throws.
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             self.coreOperationInFlight = NO;
             self->_core.reset();
@@ -513,27 +545,52 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
     const auto core = _core;
     self.coreOperationInFlight = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        const BOOL paused = core->Pause();
-        if (!paused) {
-            core->Resume();
+        BOOL paused = NO;
+        BOOL failed = NO;
+        try {
+            paused = core->Pause();
+            if (!paused) {
+                core->Resume();
+            }
+        } catch (...) {
+            failed = YES;
         }
         dispatch_async(dispatch_get_main_queue(), ^{
             self.coreOperationInFlight = NO;
-            self.statusLabel.text = paused ? @"PS3 VSH paused." : @"PS3 VSH resumed.";
+            self.statusLabel.text = failed
+                ? @"PS3 pause/resume failed without terminating the app."
+                : (paused ? @"PS3 VSH paused." : @"PS3 VSH resumed.");
         });
     });
 }
 
 - (void)importMediaAtURL:(NSURL *)url {
-    if (!self.workspaceURL) return;
+    if (self.coreOperationInFlight) {
+        self.statusLabel.text = @"Another PS3 operation is still in progress.";
+        return;
+    }
+    if (!self.workspaceURL || url.path.length == 0) {
+        self.statusLabel.text = @"The selected media URL is invalid.";
+        return;
+    }
     const BOOL accessed = [url startAccessingSecurityScopedResource];
     std::filesystem::path source(url.path.fileSystemRepresentation);
     std::filesystem::path root(self.workspaceURL.path.fileSystemRepresentation);
     self.statusLabel.text = @"Importing file into the PS3 virtual storage…";
+    self.coreOperationInFlight = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        const auto report = vshift::frontend::ImportMediaFile(source, root);
+        vshift::frontend::MediaImportReport report;
+        try {
+            report = vshift::frontend::ImportMediaFile(source, root);
+        } catch (const std::exception &exception) {
+            report.error = std::string("Media import exception: ") +
+                           exception.what();
+        } catch (...) {
+            report.error = "Media import raised an unknown exception";
+        }
         if (accessed) [url stopAccessingSecurityScopedResource];
         dispatch_async(dispatch_get_main_queue(), ^{
+            self.coreOperationInFlight = NO;
             if (!report.ok()) {
                 self.statusLabel.text = [NSString stringWithFormat:
                     @"Import failed:\n%s", report.error.c_str()];
@@ -556,13 +613,22 @@ typedef NS_ENUM(NSInteger, VSHiftPickerMode) {
         self.statusLabel.text = @"Start the real PS3 VSH before mounting an ISO.";
         return;
     }
+    if (url.path.length == 0) {
+        self.statusLabel.text = @"The selected ISO URL is invalid.";
+        return;
+    }
     const BOOL accessed = [url startAccessingSecurityScopedResource];
     std::filesystem::path iso(url.path.fileSystemRepresentation);
     const auto core = _core;
     self.statusLabel.text = @"Asking RPCS3 to insert the selected ISO…";
     self.coreOperationInFlight = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        const BOOL mounted = core->MountIso(iso);
+        BOOL mounted = NO;
+        try {
+            mounted = core->MountIso(iso);
+        } catch (...) {
+            mounted = NO;
+        }
         if (accessed) [url stopAccessingSecurityScopedResource];
         dispatch_async(dispatch_get_main_queue(), ^{
             self.coreOperationInFlight = NO;

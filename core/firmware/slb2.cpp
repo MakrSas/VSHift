@@ -54,6 +54,12 @@ Slb2ParseResult ParseSlb2Table(std::span<const std::uint8_t> table_bytes,
         return result;
     }
 
+    if (entry_count >
+        (std::numeric_limits<std::size_t>::max() - kSlb2HeaderSize) /
+            kSlb2EntrySize) {
+        result.error = "SLB2 file table size overflows the host address space";
+        return result;
+    }
     const auto table_size = kSlb2HeaderSize +
                             static_cast<std::size_t>(entry_count) *
                                 kSlb2EntrySize;

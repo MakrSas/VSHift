@@ -220,6 +220,8 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
             "../util/media_utils.cpp"
             "Cell/Modules/cellAtracXdec.cpp"
             "Cell/Modules/cellRec.cpp"
+            "Cell/Modules/cellSail.cpp"
+            "Cell/Modules/cellSailRec.cpp"
             "Cell/Modules/cellVdec.cpp"
             "Cell/Modules/cellVpost.cpp"
             "Cell/Modules/libavcdec.cpp"
@@ -269,10 +271,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     file(READ "${RPCS3_PPUMODULE_CPP}" RPCS3_PPU_MODULE_TEXT)
     if(NOT RPCS3_PPU_MODULE_TEXT MATCHES "VSHIFT_RPCS3_IOS_MODULE_TABLE")
         foreach(RPCS3_IOS_OMITTED_MODULE IN ITEMS
+            "cellAtracXdec"
             "cellAvconfExt"
             "cellDmuxPamf"
             "cellGem"
             "cellMic"
+            "cellRec"
+            "cellSail"
+            "cellSailRec"
+            "cellVdec"
+            "cellVpost"
+            "libavcdec"
             "sceNpClans")
             string(REPLACE
                 "\t\t&ppu_module_manager::${RPCS3_IOS_OMITTED_MODULE},\n"

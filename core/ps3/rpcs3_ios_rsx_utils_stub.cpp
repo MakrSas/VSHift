@@ -15,10 +15,15 @@ void convert_scale_image(u8* /*dst*/, AVPixelFormat /*dst_format*/,
 
 void clip_image(u8* dst, const u8* src, int clip_x, int clip_y, int clip_w,
                 int clip_h, int bpp, int src_pitch, int dst_pitch) {
-    if (!dst || !src || clip_w <= 0 || clip_h <= 0 || bpp <= 0) {
+    if (!dst || !src || clip_x < 0 || clip_y < 0 || clip_w <= 0 ||
+        clip_h <= 0 || bpp <= 0 || src_pitch <= 0 || dst_pitch <= 0) {
         return;
     }
     const auto row_length = static_cast<std::size_t>(clip_w) * bpp;
+    if (row_length > static_cast<std::size_t>(src_pitch) ||
+        row_length > static_cast<std::size_t>(dst_pitch)) {
+        return;
+    }
     const auto* source = src + static_cast<std::size_t>(clip_y) * src_pitch +
                          static_cast<std::size_t>(clip_x) * bpp;
     for (int row = 0; row < clip_h; ++row) {
@@ -31,10 +36,15 @@ void clip_image(u8* dst, const u8* src, int clip_x, int clip_y, int clip_w,
 void clip_image_may_overlap(u8* dst, const u8* src, int clip_x, int clip_y,
                             int clip_w, int clip_h, int bpp, int src_pitch,
                             int dst_pitch, u8* buffer) {
-    if (!buffer || clip_w <= 0 || clip_h <= 0 || bpp <= 0) {
+    if (!dst || !src || !buffer || clip_x < 0 || clip_y < 0 || clip_w <= 0 ||
+        clip_h <= 0 || bpp <= 0 || src_pitch <= 0 || dst_pitch <= 0) {
         return;
     }
     const auto row_length = static_cast<std::size_t>(clip_w) * bpp;
+    if (row_length > static_cast<std::size_t>(src_pitch) ||
+        row_length > static_cast<std::size_t>(dst_pitch)) {
+        return;
+    }
     const auto* source = src + static_cast<std::size_t>(clip_y) * src_pitch +
                          static_cast<std::size_t>(clip_x) * bpp;
     auto* temporary = buffer;
