@@ -10,10 +10,12 @@ option(VSHIFT_BUILD_TESTS "Build host-side tests" ON)
 option(VSHIFT_BUILD_IOS "Build the iOS application target" OFF)
 
 add_library(vshift_core STATIC
+    core/boot/ps4_boot.cpp
     core/boot/synthetic_boot.cpp
     core/cpu/executable_memory.cpp
     core/cpu/arm64_jit.cpp
     core/cpu/ir.cpp
+    core/cpu/x86_runtime.cpp
     core/cpu/x86_decoder.cpp
     core/memory/guest_memory.cpp
     core/loader/elf.cpp
@@ -93,6 +95,16 @@ if(VSHIFT_BUILD_TESTS)
     )
     target_link_libraries(vshift_self_test PRIVATE vshift_core)
 
+    add_executable(vshift_ps4_boot_test
+        tests/ps4_boot_test.cpp
+    )
+    target_link_libraries(vshift_ps4_boot_test PRIVATE vshift_core)
+
+    add_executable(vshift_x86_runtime_test
+        tests/x86_runtime_test.cpp
+    )
+    target_link_libraries(vshift_x86_runtime_test PRIVATE vshift_core)
+
     add_test(NAME vshift_jit_smoke COMMAND vshift_jit_smoke)
     add_test(NAME vshift_ir_test COMMAND vshift_ir_test)
     add_test(NAME vshift_differential_test COMMAND vshift_differential_test)
@@ -104,6 +116,8 @@ if(VSHIFT_BUILD_TESTS)
     add_test(NAME vshift_guest_memory_test COMMAND vshift_guest_memory_test)
     add_test(NAME vshift_elf_loader_test COMMAND vshift_elf_loader_test)
     add_test(NAME vshift_self_test COMMAND vshift_self_test)
+    add_test(NAME vshift_ps4_boot_test COMMAND vshift_ps4_boot_test)
+    add_test(NAME vshift_x86_runtime_test COMMAND vshift_x86_runtime_test)
 endif()
 
 add_executable(vshift_firmware_inspect

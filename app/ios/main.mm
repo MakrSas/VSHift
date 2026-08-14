@@ -2,6 +2,7 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include "core/boot/synthetic_boot.h"
+#include "core/boot/ps4_boot.h"
 #include "core/cpu/arm64_jit.h"
 #include "core/firmware/catalog.h"
 #include "core/firmware/pup.h"
@@ -15,6 +16,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <string>
+#include <string_view>
 #include <vector>
 
 @interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate>
@@ -378,112 +381,65 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 
 - (void)attemptRealPS4BootAtURL:(NSURL *)rootURL {
     const BOOL accessed = [rootURL startAccessingSecurityScopedResource];
-    NSURL *moduleURL = [rootURL
-        URLByAppendingPathComponent:@"system/sys/SceSysCore.elf"];
-    NSDictionary *attributes = [[NSFileManager defaultManager]
-        attributesOfItemAtPath:moduleURL.path error:nil];
-    NSNumber *sizeNumber = attributes[NSFileSize];
-    const auto fileSize = sizeNumber != nil
-                              ? sizeNumber.unsignedLongLongValue
-                              : 0;
-    if (fileSize == 0 || fileSize > 512ull * 1024ull * 1024ull) {
-        self.statusLabel.text =
-            @"REAL PS4 BOOT STOPPED\nSceSysCore.elf is missing or too large.";
-        if (accessed) {
-            [rootURL stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    NSFileHandle *handle =
-        [NSFileHandle fileHandleForReadingFromURL:moduleURL error:nil];
-    if (handle == nil) {
-        self.statusLabel.text =
-            @"REAL PS4 BOOT STOPPED\nCould not open SceSysCore.elf.";
-        if (accessed) {
-            [rootURL stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-    NSData *moduleData = [handle readDataToEndOfFile];
-    [handle closeFile];
-    if (moduleData.length != fileSize) {
-        self.statusLabel.text =
-            @"REAL PS4 BOOT STOPPED\nCould not read SceSysCore.elf completely.";
-        if (accessed) {
-            [rootURL stopAccessingSecurityScopedResource];
-        }
-        return;
-    }
-
-    const auto *moduleBytes =
-        static_cast<const std::uint8_t *>(moduleData.bytes);
-    vshift::memory::GuestMemory guestMemory;
-    NSString *stage = nil;
-    NSString *detail = nil;
-    if (moduleData.length >= sizeof(std::uint32_t) &&
-        ReadU32LE(moduleBytes) == vshift::loader::kPs4SelfMagic) {
-        const auto parsed = vshift::loader::ParsePs4SelfHeaders(
-            std::span<const std::uint8_t>(moduleBytes, moduleData.length),
-            fileSize);
-        if (!parsed.ok()) {
-            stage = @"SELF header";
-            detail = [NSString stringWithUTF8String:parsed.error.c_str()];
-        } else {
-            const auto loaded = vshift::loader::MapSelfLoadSegments(
-                parsed,
-                std::span<const std::uint8_t>(moduleBytes, moduleData.length),
-                guestMemory);
-            if (!loaded.ok()) {
-                stage = @"SELF payload";
-                detail = [NSString stringWithUTF8String:loaded.error.c_str()];
-            } else {
-                stage = @"guest mapping";
-                detail = [NSString stringWithFormat:
-                    @"mapped %lu PT_LOAD segments; entry 0x%llx",
-                    static_cast<unsigned long>(loaded.mappings.size()),
-                    static_cast<unsigned long long>(loaded.entry)];
+    vshift::boot::Ps4BootSession session;
+    const auto report = session.Run(
+        [&](std::string_view relativePath) -> vshift::boot::BootFile {
+            NSString *relative = [NSString stringWithUTF8String:
+                std::string(relativePath).c_str()];
+            NSURL *moduleURL = [rootURL URLByAppendingPathComponent:relative];
+            NSDictionary *attributes = [[NSFileManager defaultManager]
+                attributesOfItemAtPath:moduleURL.path error:nil];
+            NSNumber *sizeNumber = attributes[NSFileSize];
+            const auto fileSize = sizeNumber != nil
+                                      ? sizeNumber.unsignedLongLongValue
+                                      : 0;
+            if (fileSize == 0 || fileSize > 512ull * 1024ull * 1024ull) {
+                return {{}, "module is missing or too large"};
             }
-        }
-    } else if (moduleData.length >= vshift::loader::kElf64HeaderSize) {
-        const auto parsed = vshift::loader::ParseElf64Headers(
-            std::span<const std::uint8_t>(moduleBytes, moduleData.length),
-            fileSize);
-        if (!parsed.ok()) {
-            stage = @"ELF header";
-            detail = [NSString stringWithUTF8String:parsed.error.c_str()];
-        } else {
-            const auto loaded = vshift::loader::MapElfLoadSegments(
-                parsed,
-                std::span<const std::uint8_t>(moduleBytes, moduleData.length),
-                guestMemory);
-            if (!loaded.ok()) {
-                stage = @"ELF payload";
-                detail = [NSString stringWithUTF8String:loaded.error.c_str()];
-            } else {
-                stage = @"guest mapping";
-                detail = [NSString stringWithFormat:
-                    @"mapped %lu PT_LOAD segments; entry 0x%llx",
-                    static_cast<unsigned long>(loaded.mappings.size()),
-                    static_cast<unsigned long long>(loaded.entry)];
+            NSFileHandle *handle =
+                [NSFileHandle fileHandleForReadingFromURL:moduleURL error:nil];
+            if (handle == nil) {
+                return {{}, "module could not be opened"};
             }
-        }
-    } else {
-        stage = @"module format";
-        detail = @"SceSysCore.elf is neither PS4 SELF nor ELF64";
-    }
-
+            NSData *data = [handle readDataToEndOfFile];
+            [handle closeFile];
+            if (data.length != fileSize) {
+                return {{}, "module could not be read completely"};
+            }
+            const auto *bytes =
+                static_cast<const std::uint8_t *>(data.bytes);
+            return {std::vector<std::uint8_t>(bytes, bytes + data.length), {}};
+        });
     if (accessed) {
         [rootURL stopAccessingSecurityScopedResource];
     }
-    if ([stage isEqualToString:@"guest mapping"] &&
-        [detail hasPrefix:@"mapped"]) {
+    if (!report.ok()) {
+        NSString *stage = @"firmware root";
+        switch (report.stage) {
+        case vshift::boot::Ps4BootStage::SysCore:
+            stage = @"SceSysCore";
+            break;
+        case vshift::boot::Ps4BootStage::ShellCore:
+            stage = @"SceShellCore";
+            break;
+        case vshift::boot::Ps4BootStage::GuestExecution:
+            stage = @"guest CPU";
+            break;
+        default:
+            break;
+        }
         self.statusLabel.text = [NSString stringWithFormat:
-            @"REAL PS4 BOOT PAUSED\n%@\n%@\nGuest CPU execution is the next stage; no screen is claimed.",
-            stage, detail];
+            @"REAL PS4 BOOT STOPPED\nStage: %@\n%s", stage,
+            report.error.c_str()];
+        return;
+    }
+    if (report.modules_mapped()) {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"REAL PS4 BOOT PATH READY\nSceSysCore: %lu segments\nSceShellCore: %lu segments\nGuest CPU execution and GPU frame presentation are next; no screen is claimed yet.",
+            static_cast<unsigned long>(report.syscore.mapped_segments),
+            static_cast<unsigned long>(report.shellcore.mapped_segments)];
     } else {
-        self.statusLabel.text = [NSString stringWithFormat:
-            @"REAL PS4 BOOT STOPPED\nStage: %@\n%@", stage, detail];
+        self.statusLabel.text = @"REAL PS4 BOOT STOPPED\nNo modules were mapped.";
     }
 }
 
