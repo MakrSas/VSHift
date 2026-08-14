@@ -12,198 +12,15 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
-#include <string>
 #include <vector>
-
-@interface VSHiftPS4ScreenViewController : UIViewController
-@property(nonatomic, strong) NSURL *firmwareRootURL;
-@property(nonatomic, copy) NSString *firmwareName;
-@property(nonatomic, copy) NSString *shellStatus;
-@end
 
 @interface VSHiftJITViewController : UIViewController <UIDocumentPickerDelegate>
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UIButton *exportManifestButton;
 @property(nonatomic, strong) NSURL *manifestURL;
-@property(nonatomic, strong) NSURL *firmwareRootURL;
-@property(nonatomic, strong) UIButton *launchScreenButton;
 @property(nonatomic, assign) BOOL pickingDecryptedFirmware;
 @property(nonatomic, assign) BOOL pickingFirmwareRoot;
 @property(nonatomic, assign) BOOL pickingFirmwareSelfProbe;
-@end
-
-@implementation VSHiftPS4ScreenViewController
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.view.backgroundColor = UIColor.blackColor;
-
-    UIScrollView *scrollView = [[UIScrollView alloc] init];
-    scrollView.translatesAutoresizingMaskIntoConstraints = NO;
-    scrollView.alwaysBounceVertical = YES;
-    scrollView.showsVerticalScrollIndicator = NO;
-    [self.view addSubview:scrollView];
-
-    UIStackView *content = [[UIStackView alloc] init];
-    content.translatesAutoresizingMaskIntoConstraints = NO;
-    content.axis = UILayoutConstraintAxisVertical;
-    content.spacing = 18.0;
-    content.layoutMargins = UIEdgeInsetsMake(22.0, 20.0, 28.0, 20.0);
-    content.layoutMarginsRelativeArrangement = YES;
-    [scrollView addSubview:content];
-
-    UIButtonConfiguration *closeConfiguration =
-        [UIButtonConfiguration grayButtonConfiguration];
-    closeConfiguration.title = @"Done";
-    closeConfiguration.image = [UIImage systemImageNamed:@"xmark"];
-    closeConfiguration.imagePadding = 6.0;
-    closeConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeButton.configuration = closeConfiguration;
-    [closeButton addTarget:self action:@selector(closeScreen)
-          forControlEvents:UIControlEventTouchUpInside];
-
-    UILabel *eyebrow = [[UILabel alloc] init];
-    eyebrow.text = @"PLAYSTATION 4 · VSHIFT";
-    eyebrow.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
-    eyebrow.textColor = UIColor.systemGray2Color;
-
-    UILabel *title = [[UILabel alloc] init];
-    title.text = @"PS4 VSH";
-    title.font = [UIFont systemFontOfSize:42.0 weight:UIFontWeightSemibold];
-    title.textColor = UIColor.whiteColor;
-
-    UILabel *subtitle = [[UILabel alloc] init];
-    subtitle.text = self.firmwareName.length > 0
-        ? [NSString stringWithFormat:@"%@\n%@", self.firmwareName,
-           self.shellStatus ?: @"SceShellCore metadata mapped"]
-        : (self.shellStatus ?: @"SceShellCore metadata mapped");
-    subtitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
-    subtitle.textColor = UIColor.systemGray2Color;
-    subtitle.numberOfLines = 0;
-
-    UIStackView *heading = [[UIStackView alloc] initWithArrangedSubviews:@[
-        closeButton, eyebrow, title, subtitle
-    ]];
-    heading.axis = UILayoutConstraintAxisVertical;
-    heading.spacing = 8.0;
-    [content addArrangedSubview:heading];
-
-    NSArray<NSString *> *tabs = @[@"Games", @"Media", @"Settings"];
-    UIStackView *tabStack = [[UIStackView alloc] init];
-    tabStack.axis = UILayoutConstraintAxisHorizontal;
-    tabStack.spacing = 10.0;
-    tabStack.distribution = UIStackViewDistributionFillEqually;
-    for (NSString *tab in tabs) {
-        UIButtonConfiguration *tabConfiguration =
-            [UIButtonConfiguration tintedButtonConfiguration];
-        tabConfiguration.title = tab;
-        tabConfiguration.baseForegroundColor = UIColor.systemGray2Color;
-        tabConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-        UIButton *tabButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        tabButton.configuration = tabConfiguration;
-        [tabStack addArrangedSubview:tabButton];
-    }
-    [content addArrangedSubview:tabStack];
-
-    UILabel *section = [[UILabel alloc] init];
-    section.text = @"What’s new";
-    section.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle3];
-    section.textColor = UIColor.whiteColor;
-    [content addArrangedSubview:section];
-
-    UIView *welcomeCard = [[UIView alloc] init];
-    welcomeCard.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1.0];
-    welcomeCard.layer.cornerRadius = 24.0;
-    welcomeCard.layoutMargins = UIEdgeInsetsMake(18.0, 18.0, 18.0, 18.0);
-    UILabel *welcomeTitle = [[UILabel alloc] init];
-    welcomeTitle.text = @"Firmware workspace ready";
-    welcomeTitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-    welcomeTitle.textColor = UIColor.whiteColor;
-    UILabel *welcomeBody = [[UILabel alloc] init];
-    welcomeBody.text = @"The selected PS4 system root is mounted for the VSHift HLE display. The next guest milestone is executing the protected SELF payload through the x86-64 translator.";
-    welcomeBody.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
-    welcomeBody.textColor = UIColor.systemGray2Color;
-    welcomeBody.numberOfLines = 0;
-    UIStackView *welcomeStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        welcomeTitle, welcomeBody
-    ]];
-    welcomeStack.axis = UILayoutConstraintAxisVertical;
-    welcomeStack.spacing = 8.0;
-    welcomeStack.translatesAutoresizingMaskIntoConstraints = NO;
-    [welcomeCard addSubview:welcomeStack];
-    [NSLayoutConstraint activateConstraints:@[
-        [welcomeStack.leadingAnchor constraintEqualToAnchor:welcomeCard.layoutMarginsGuide.leadingAnchor],
-        [welcomeStack.trailingAnchor constraintEqualToAnchor:welcomeCard.layoutMarginsGuide.trailingAnchor],
-        [welcomeStack.topAnchor constraintEqualToAnchor:welcomeCard.layoutMarginsGuide.topAnchor],
-        [welcomeStack.bottomAnchor constraintEqualToAnchor:welcomeCard.layoutMarginsGuide.bottomAnchor],
-    ]];
-    [content addArrangedSubview:welcomeCard];
-
-    UIStackView *tiles = [[UIStackView alloc] init];
-    tiles.axis = UILayoutConstraintAxisHorizontal;
-    tiles.spacing = 12.0;
-    tiles.distribution = UIStackViewDistributionFillEqually;
-    NSArray<NSArray<NSString *> *> *tileData = @[
-        @[@"🎮", @"Games"],
-        @[@"🌐", @"Web Browser"],
-        @[@"⚙︎", @"Settings"],
-    ];
-    for (NSArray<NSString *> *data in tileData) {
-        UIView *tile = [[UIView alloc] init];
-        tile.backgroundColor = [UIColor colorWithWhite:0.10 alpha:1.0];
-        tile.layer.cornerRadius = 20.0;
-        tile.layoutMargins = UIEdgeInsetsMake(16.0, 12.0, 16.0, 12.0);
-        UILabel *icon = [[UILabel alloc] init];
-        icon.text = data[0];
-        icon.font = [UIFont systemFontOfSize:30.0];
-        icon.textAlignment = NSTextAlignmentCenter;
-        UILabel *name = [[UILabel alloc] init];
-        name.text = data[1];
-        name.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
-        name.textColor = UIColor.systemGray2Color;
-        name.textAlignment = NSTextAlignmentCenter;
-        UIStackView *tileStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-            icon, name
-        ]];
-        tileStack.axis = UILayoutConstraintAxisVertical;
-        tileStack.spacing = 8.0;
-        tileStack.translatesAutoresizingMaskIntoConstraints = NO;
-        [tile addSubview:tileStack];
-        [NSLayoutConstraint activateConstraints:@[
-            [tileStack.leadingAnchor constraintEqualToAnchor:tile.layoutMarginsGuide.leadingAnchor],
-            [tileStack.trailingAnchor constraintEqualToAnchor:tile.layoutMarginsGuide.trailingAnchor],
-            [tileStack.topAnchor constraintEqualToAnchor:tile.layoutMarginsGuide.topAnchor],
-            [tileStack.bottomAnchor constraintEqualToAnchor:tile.layoutMarginsGuide.bottomAnchor],
-        ]];
-        [tiles addArrangedSubview:tile];
-    }
-    [content addArrangedSubview:tiles];
-
-    UILabel *footer = [[UILabel alloc] init];
-    footer.text = @"VSHift · PS4 screen output\nReal SELF headers: validated · Guest code: next stage";
-    footer.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
-    footer.textColor = UIColor.systemGray;
-    footer.numberOfLines = 0;
-    [content addArrangedSubview:footer];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [scrollView.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
-        [scrollView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
-        [scrollView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [scrollView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
-        [content.leadingAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.leadingAnchor],
-        [content.trailingAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.trailingAnchor],
-        [content.topAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.topAnchor],
-        [content.bottomAnchor constraintEqualToAnchor:scrollView.contentLayoutGuide.bottomAnchor],
-        [content.widthAnchor constraintEqualToAnchor:scrollView.frameLayoutGuide.widthAnchor],
-    ]];
-}
-
-- (void)closeScreen {
-    [self dismissViewControllerAnimated:YES completion:nil];
-}
-
 @end
 
 @implementation VSHiftJITViewController
@@ -378,25 +195,12 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
                         action:@selector(probeFirmwareSelf)
               forControlEvents:UIControlEventTouchUpInside];
 
-    UIButtonConfiguration *launchConfiguration =
-        [UIButtonConfiguration filledButtonConfiguration];
-    launchConfiguration.title = @"Launch PS4 screen";
-    launchConfiguration.image = [UIImage systemImageNamed:@"tv"];
-    launchConfiguration.imagePadding = 8.0;
-    launchConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    self.launchScreenButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.launchScreenButton.configuration = launchConfiguration;
-    [self.launchScreenButton addTarget:self
-                                action:@selector(launchPS4Screen)
-                      forControlEvents:UIControlEventTouchUpInside];
-
     UIView *bootCard = [[UIView alloc] init];
     bootCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
     bootCard.layer.cornerRadius = 24.0;
     bootCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
     UIStackView *bootStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        bootHeader, self.launchScreenButton, selfProbeButton,
-        syntheticJitButton, syntheticJitLessButton
+        bootHeader, selfProbeButton, syntheticJitButton, syntheticJitLessButton
     ]];
     bootStack.axis = UILayoutConstraintAxisVertical;
     bootStack.spacing = 12.0;
@@ -485,39 +289,6 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     [self presentViewController:picker animated:YES completion:nil];
 }
 
-- (void)launchPS4Screen {
-    if (self.firmwareRootURL == nil) {
-        self.statusLabel.text =
-            @"Choose Firmware 5.05 root first, then press Launch PS4 screen.";
-        [self importFirmwareRoot];
-        return;
-    }
-
-    const BOOL accessed =
-        [self.firmwareRootURL startAccessingSecurityScopedResource];
-    NSURL *shellURL = [self.firmwareRootURL
-        URLByAppendingPathComponent:@"system/vsh/SceShellCore.elf"];
-    NSDictionary *attributes = [[NSFileManager defaultManager]
-        attributesOfItemAtPath:shellURL.path error:nil];
-    NSNumber *size = attributes[NSFileSize];
-    NSString *shellStatus = size != nil
-        ? [NSString stringWithFormat:
-              @"SceShellCore SELF mapped · %@ bytes · HLE display",
-              size]
-        : @"SceShellCore metadata mapped · HLE display";
-
-    VSHiftPS4ScreenViewController *screen =
-        [[VSHiftPS4ScreenViewController alloc] init];
-    screen.firmwareRootURL = self.firmwareRootURL;
-    screen.firmwareName = self.firmwareRootURL.lastPathComponent;
-    screen.shellStatus = shellStatus;
-    screen.modalPresentationStyle = UIModalPresentationFullScreen;
-    if (accessed) {
-        [self.firmwareRootURL stopAccessingSecurityScopedResource];
-    }
-    [self presentViewController:screen animated:YES completion:nil];
-}
-
 - (void)exportManifest {
     if (self.manifestURL == nil) {
         self.statusLabel.text =
@@ -563,7 +334,6 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
 }
 
 - (void)inspectFirmwareRootAtURL:(NSURL *)url {
-    self.firmwareRootURL = url;
     const BOOL accessed = [url startAccessingSecurityScopedResource];
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSArray<NSString *> *requiredPaths = @[
