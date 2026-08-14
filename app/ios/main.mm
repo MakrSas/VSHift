@@ -7,7 +7,10 @@
 #include "core/firmware/pup.h"
 #include "core/firmware/slb2.h"
 #include "core/cpu/x86_decoder.h"
+#include "core/loader/elf_loader.h"
 #include "core/loader/self.h"
+#include "core/loader/self_loader.h"
+#include "core/memory/guest_memory.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -18,9 +21,11 @@
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UIButton *exportManifestButton;
 @property(nonatomic, strong) NSURL *manifestURL;
+@property(nonatomic, strong) NSURL *firmwareRootURL;
 @property(nonatomic, assign) BOOL pickingDecryptedFirmware;
 @property(nonatomic, assign) BOOL pickingFirmwareRoot;
 @property(nonatomic, assign) BOOL pickingFirmwareSelfProbe;
+@property(nonatomic, assign) BOOL pickingRealBoot;
 @end
 
 @implementation VSHiftJITViewController
@@ -195,12 +200,25 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
                         action:@selector(probeFirmwareSelf)
               forControlEvents:UIControlEventTouchUpInside];
 
+    UIButtonConfiguration *realBootConfiguration =
+        [UIButtonConfiguration filledButtonConfiguration];
+    realBootConfiguration.title = @"Attempt real PS4 boot";
+    realBootConfiguration.image = [UIImage systemImageNamed:@"play.tv"];
+    realBootConfiguration.imagePadding = 8.0;
+    realBootConfiguration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    UIButton *realBootButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    realBootButton.configuration = realBootConfiguration;
+    [realBootButton addTarget:self
+                       action:@selector(attemptRealPS4Boot)
+             forControlEvents:UIControlEventTouchUpInside];
+
     UIView *bootCard = [[UIView alloc] init];
     bootCard.backgroundColor = UIColor.secondarySystemBackgroundColor;
     bootCard.layer.cornerRadius = 24.0;
     bootCard.layoutMargins = UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0);
     UIStackView *bootStack = [[UIStackView alloc] initWithArrangedSubviews:@[
-        bootHeader, selfProbeButton, syntheticJitButton, syntheticJitLessButton
+        bootHeader, realBootButton, selfProbeButton,
+        syntheticJitButton, syntheticJitLessButton
     ]];
     bootStack.axis = UILayoutConstraintAxisVertical;
     bootStack.spacing = 12.0;
@@ -241,6 +259,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     self.pickingDecryptedFirmware = NO;
     self.pickingFirmwareRoot = NO;
     self.pickingFirmwareSelfProbe = NO;
+    self.pickingRealBoot = NO;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
             initForOpeningContentTypes:@[UTTypeData]
@@ -254,6 +273,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     self.pickingDecryptedFirmware = YES;
     self.pickingFirmwareRoot = NO;
     self.pickingFirmwareSelfProbe = NO;
+    self.pickingRealBoot = NO;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
             initForOpeningContentTypes:@[UTTypeData]
@@ -267,6 +287,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     self.pickingDecryptedFirmware = NO;
     self.pickingFirmwareRoot = YES;
     self.pickingFirmwareSelfProbe = NO;
+    self.pickingRealBoot = NO;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
             initForOpeningContentTypes:@[UTTypeFolder]
@@ -280,6 +301,7 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     self.pickingDecryptedFirmware = NO;
     self.pickingFirmwareRoot = NO;
     self.pickingFirmwareSelfProbe = YES;
+    self.pickingRealBoot = NO;
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
             initForOpeningContentTypes:@[UTTypeFolder]
@@ -287,6 +309,27 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     picker.delegate = self;
     picker.allowsMultipleSelection = NO;
     [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)attemptRealPS4Boot {
+    if (self.firmwareRootURL == nil) {
+        self.statusLabel.text =
+            @"Choose Firmware 5.05 root first. The real boot attempt will then read SceSysCore.elf.";
+        self.pickingDecryptedFirmware = NO;
+        self.pickingFirmwareRoot = NO;
+        self.pickingFirmwareSelfProbe = NO;
+        self.pickingRealBoot = YES;
+        UIDocumentPickerViewController *picker =
+            [[UIDocumentPickerViewController alloc]
+                initForOpeningContentTypes:@[UTTypeFolder]
+                                     asCopy:NO];
+        picker.delegate = self;
+        picker.allowsMultipleSelection = NO;
+        [self presentViewController:picker animated:YES completion:nil];
+        return;
+    }
+
+    [self attemptRealPS4BootAtURL:self.firmwareRootURL];
 }
 
 - (void)exportManifest {
@@ -333,7 +376,119 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
         report.result];
 }
 
+- (void)attemptRealPS4BootAtURL:(NSURL *)rootURL {
+    const BOOL accessed = [rootURL startAccessingSecurityScopedResource];
+    NSURL *moduleURL = [rootURL
+        URLByAppendingPathComponent:@"system/sys/SceSysCore.elf"];
+    NSDictionary *attributes = [[NSFileManager defaultManager]
+        attributesOfItemAtPath:moduleURL.path error:nil];
+    NSNumber *sizeNumber = attributes[NSFileSize];
+    const auto fileSize = sizeNumber != nil
+                              ? sizeNumber.unsignedLongLongValue
+                              : 0;
+    if (fileSize == 0 || fileSize > 512ull * 1024ull * 1024ull) {
+        self.statusLabel.text =
+            @"REAL PS4 BOOT STOPPED\nSceSysCore.elf is missing or too large.";
+        if (accessed) {
+            [rootURL stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    NSFileHandle *handle =
+        [NSFileHandle fileHandleForReadingFromURL:moduleURL error:nil];
+    if (handle == nil) {
+        self.statusLabel.text =
+            @"REAL PS4 BOOT STOPPED\nCould not open SceSysCore.elf.";
+        if (accessed) {
+            [rootURL stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+    NSData *moduleData = [handle readDataToEndOfFile];
+    [handle closeFile];
+    if (moduleData.length != fileSize) {
+        self.statusLabel.text =
+            @"REAL PS4 BOOT STOPPED\nCould not read SceSysCore.elf completely.";
+        if (accessed) {
+            [rootURL stopAccessingSecurityScopedResource];
+        }
+        return;
+    }
+
+    const auto *moduleBytes =
+        static_cast<const std::uint8_t *>(moduleData.bytes);
+    vshift::memory::GuestMemory guestMemory;
+    NSString *stage = nil;
+    NSString *detail = nil;
+    if (moduleData.length >= sizeof(std::uint32_t) &&
+        ReadU32LE(moduleBytes) == vshift::loader::kPs4SelfMagic) {
+        const auto parsed = vshift::loader::ParsePs4SelfHeaders(
+            std::span<const std::uint8_t>(moduleBytes, moduleData.length),
+            fileSize);
+        if (!parsed.ok()) {
+            stage = @"SELF header";
+            detail = [NSString stringWithUTF8String:parsed.error.c_str()];
+        } else {
+            const auto loaded = vshift::loader::MapSelfLoadSegments(
+                parsed,
+                std::span<const std::uint8_t>(moduleBytes, moduleData.length),
+                guestMemory);
+            if (!loaded.ok()) {
+                stage = @"SELF payload";
+                detail = [NSString stringWithUTF8String:loaded.error.c_str()];
+            } else {
+                stage = @"guest mapping";
+                detail = [NSString stringWithFormat:
+                    @"mapped %lu PT_LOAD segments; entry 0x%llx",
+                    static_cast<unsigned long>(loaded.mappings.size()),
+                    static_cast<unsigned long long>(loaded.entry)];
+            }
+        }
+    } else if (moduleData.length >= vshift::loader::kElf64HeaderSize) {
+        const auto parsed = vshift::loader::ParseElf64Headers(
+            std::span<const std::uint8_t>(moduleBytes, moduleData.length),
+            fileSize);
+        if (!parsed.ok()) {
+            stage = @"ELF header";
+            detail = [NSString stringWithUTF8String:parsed.error.c_str()];
+        } else {
+            const auto loaded = vshift::loader::MapElfLoadSegments(
+                parsed,
+                std::span<const std::uint8_t>(moduleBytes, moduleData.length),
+                guestMemory);
+            if (!loaded.ok()) {
+                stage = @"ELF payload";
+                detail = [NSString stringWithUTF8String:loaded.error.c_str()];
+            } else {
+                stage = @"guest mapping";
+                detail = [NSString stringWithFormat:
+                    @"mapped %lu PT_LOAD segments; entry 0x%llx",
+                    static_cast<unsigned long>(loaded.mappings.size()),
+                    static_cast<unsigned long long>(loaded.entry)];
+            }
+        }
+    } else {
+        stage = @"module format";
+        detail = @"SceSysCore.elf is neither PS4 SELF nor ELF64";
+    }
+
+    if (accessed) {
+        [rootURL stopAccessingSecurityScopedResource];
+    }
+    if ([stage isEqualToString:@"guest mapping"] &&
+        [detail hasPrefix:@"mapped"]) {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"REAL PS4 BOOT PAUSED\n%@\n%@\nGuest CPU execution is the next stage; no screen is claimed.",
+            stage, detail];
+    } else {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"REAL PS4 BOOT STOPPED\nStage: %@\n%@", stage, detail];
+    }
+}
+
 - (void)inspectFirmwareRootAtURL:(NSURL *)url {
+    self.firmwareRootURL = url;
     const BOOL accessed = [url startAccessingSecurityScopedResource];
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSArray<NSString *> *requiredPaths = @[
@@ -1000,6 +1155,13 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
     if (self.pickingFirmwareSelfProbe) {
         self.pickingFirmwareSelfProbe = NO;
         [self probeFirmwareSelfAtURL:url];
+        return;
+    }
+
+    if (self.pickingRealBoot) {
+        self.pickingRealBoot = NO;
+        self.firmwareRootURL = url;
+        [self attemptRealPS4BootAtURL:url];
         return;
     }
 
