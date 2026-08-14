@@ -56,13 +56,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Resolve RPCS3 revision
+        id: rpcs3
+        shell: bash
+        run: echo "revision=$(git -C third_party/rpcs3 rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Restore iOS device build cache
         uses: actions/cache@v4
         with:
           path: build-device
-          key: ios-device-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'app/ios/**', 'core/**', '.gitmodules') }}
+          key: ios-device-${{ runner.os }}-${{ steps.rpcs3.outputs.revision }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'app/ios/**', 'core/**', '.gitmodules') }}
           restore-keys: |
-            ios-device-${{ runner.os }}-
+            ios-device-${{ runner.os }}-${{ steps.rpcs3.outputs.revision }}-
       - name: Configure device project
         run: >-
           cmake -S . -B build-device -G Xcode
