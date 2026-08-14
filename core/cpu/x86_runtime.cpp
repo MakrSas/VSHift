@@ -752,6 +752,7 @@ GuestCpuResult RunGuest(memory::GuestMemory& memory, std::uint64_t entry,
         ++result.instructions;
     }
 
+    result.budget_exhausted = true;
     result.error = "guest instruction budget exhausted";
     return result;
 }

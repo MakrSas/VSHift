@@ -473,20 +473,18 @@ static std::uint16_t ReadU16LE(const std::uint8_t *bytes) {
             report.error.c_str()];
         return;
     }
-    if (report.modules_mapped()) {
-        const auto *frame = session.video_output().last_frame();
-        if (frame != nullptr) {
-            self.statusLabel.text = [NSString stringWithFormat:
-                @"PS4 GUEST FRAME PRESENTED\nSceSysCore: %lu segments\nSceShellCore: %lu segments\nFrame: %ux%u",
-                static_cast<unsigned long>(report.syscore.mapped_segments),
-                static_cast<unsigned long>(report.shellcore.mapped_segments),
-                frame->description.width, frame->description.height];
-        } else {
-            self.statusLabel.text = [NSString stringWithFormat:
-                @"REAL PS4 BOOT PATH READY\nSceSysCore: %lu segments\nSceShellCore: %lu segments\nNo guest video frame was submitted.",
-                static_cast<unsigned long>(report.syscore.mapped_segments),
-                static_cast<unsigned long>(report.shellcore.mapped_segments)];
-        }
+    const auto *frame = session.video_output().last_frame();
+    if (frame != nullptr) {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"PS4 GUEST FRAME PRESENTED\nSceSysCore: %lu segments\nSceShellCore: %lu segments\nFrame: %ux%u",
+            static_cast<unsigned long>(report.syscore.mapped_segments),
+            static_cast<unsigned long>(report.shellcore.mapped_segments),
+            frame->description.width, frame->description.height];
+    } else if (report.modules_mapped()) {
+        self.statusLabel.text = [NSString stringWithFormat:
+            @"REAL PS4 BOOT PATH READY\nSceSysCore: %lu segments\nSceShellCore: %lu segments\nNo guest video frame was submitted.",
+            static_cast<unsigned long>(report.syscore.mapped_segments),
+            static_cast<unsigned long>(report.shellcore.mapped_segments)];
     } else {
         self.statusLabel.text = @"REAL PS4 BOOT STOPPED\nNo modules were mapped.";
     }

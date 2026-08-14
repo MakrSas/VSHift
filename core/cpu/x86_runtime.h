@@ -41,6 +41,7 @@ struct GuestCpuResult final {
     GuestRegisters registers;
     std::uint64_t instructions = 0;
     bool returned = false;
+    bool budget_exhausted = false;
     std::string error;
 
     bool ok() const noexcept { return error.empty() && returned; }

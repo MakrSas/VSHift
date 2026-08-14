@@ -164,6 +164,11 @@ Ps4BootReport Ps4BootSession::Run(const BootFileReader& read_file) {
     report.guest_instructions = syscore_guest.instructions;
     report.guest_returned = syscore_guest.returned;
     if (!syscore_guest.ok()) {
+        if (syscore_guest.budget_exhausted &&
+            video_output_.last_frame() != nullptr) {
+            report.stage = Ps4BootStage::FramePresentation;
+            return report;
+        }
         report.error = syscore_guest.error.empty()
                            ? "SceSysCore guest execution stopped"
                            : syscore_guest.error;
