@@ -89,6 +89,8 @@ set(RPCS3_SPULLVM_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/SPULLVMRecompiler.cpp")
 set(RPCS3_SPUCOMMON_CPP
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/rpcs3/Emu/Cell/SPUCommonRecompiler.cpp")
+set(RPCS3_CUBEB_CMAKE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3/3rdparty/cubeb/cubeb/CMakeLists.txt")
 file(READ "${RPCS3_3RDPARTY_CMAKE}" RPCS3_3RDPARTY_TEXT)
 if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
     vshift_patch_rpcs3_cmake_between(
@@ -187,6 +189,20 @@ endif()
 # uses VSHift's signed executable-memory bridge instead; make the upstream
 # guard a no-op on iOS while preserving the macOS implementation unchanged.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # The embedded cubeb project detects AudioUnit on iOS, then adds its
+    # macOS CoreAudio run-loop helper.  That helper includes the macOS-only
+    # CoreAudio/AudioHardware.h header.  VSHift intentionally uses the
+    # headless audio backend during the firmware boot milestone, so keep the
+    # cubeb API target but omit its host AudioUnit backend on iOS.
+    file(READ "${RPCS3_CUBEB_CMAKE}" RPCS3_CUBEB_TEXT)
+    if(NOT RPCS3_CUBEB_TEXT MATCHES "USE_AUDIOUNIT AND NOT CMAKE_SYSTEM_NAME")
+        string(REPLACE
+            "if(USE_AUDIOUNIT)"
+            "if(USE_AUDIOUNIT AND NOT CMAKE_SYSTEM_NAME STREQUAL \"iOS\")"
+            RPCS3_CUBEB_TEXT "${RPCS3_CUBEB_TEXT}")
+        file(WRITE "${RPCS3_CUBEB_CMAKE}" "${RPCS3_CUBEB_TEXT}")
+    endif()
+
     file(READ "${RPCS3_THREAD_CPP}" RPCS3_THREAD_TEXT)
     if(NOT RPCS3_THREAD_TEXT MATCHES "VSHIFT_RPCS3_IOS.*s_tls_is_attempting_recovery")
         string(REPLACE
