@@ -197,6 +197,11 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         "if(CMAKE_SYSTEM_PROCESSOR MATCHES \"ARM64|arm64|aarch64\")"
         "if(CMAKE_SYSTEM_PROCESSOR MATCHES \"ARM64|arm64|aarch64\" OR CMAKE_SYSTEM_NAME STREQUAL \"iOS\")"
         RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+    foreach(RPCS3_OPTIONAL_AARCH64_SOURCE IN ITEMS
+        "        CPU/Backends/AArch64/AArch64ASM.cpp\n"
+        "        CPU/Backends/AArch64/AArch64JIT.cpp\n")
+        string(REPLACE "${RPCS3_OPTIONAL_AARCH64_SOURCE}" "" RPCS3_EMU_TEXT "${RPCS3_EMU_TEXT}")
+    endforeach()
     file(WRITE "${RPCS3_EMU_CMAKE}" "${RPCS3_EMU_TEXT}")
 endif()
 
