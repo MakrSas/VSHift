@@ -150,11 +150,13 @@ if(VSHIFT_BUILD_IOS)
     )
     find_library(UIKIT_FRAMEWORK UIKit REQUIRED)
     find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
+    find_library(CORE_GRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
     find_library(UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK UniformTypeIdentifiers REQUIRED)
     target_link_libraries(vshift_ios_jit_probe PRIVATE
         vshift_core
         ${UIKIT_FRAMEWORK}
         ${FOUNDATION_FRAMEWORK}
+        ${CORE_GRAPHICS_FRAMEWORK}
         ${UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK}
     )
     set_target_properties(vshift_ios_jit_probe PROPERTIES
