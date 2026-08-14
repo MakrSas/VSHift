@@ -1,6 +1,8 @@
 #include "stdafx.h"
 
 #include "Emu/Cell/SPURecompiler.h"
+#include "Emu/Cell/Modules/cellAudioIn.h"
+#include "Emu/Cell/Modules/cellGem.h"
 #include "Input/pad_thread.h"
 
 #include <cstdlib>
@@ -40,6 +42,18 @@ void spu_llvm_set_compile_context(spu_llvm_compile_context* /*context*/) noexcep
 	// LLVM is intentionally not part of the first iOS device profile. The
 	// portable SPU path still references this ARM64 hook through its common
 	// recompiler interface, so provide the no-LLVM context boundary here.
+}
+
+template <>
+void fmt_class_string<CellAudioInError>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](auto) { return "CELL_AUDIO_IN_UNAVAILABLE"; });
+}
+
+template <>
+void fmt_class_string<CellGemError>::format(std::string& out, u64 arg)
+{
+	format_enum(out, arg, [](auto) { return "CELL_GEM_UNAVAILABLE"; });
 }
 
 void pad_thread::SetRumble(u32 /*pad*/, u8 /*large_motor*/, u8 /*small_motor*/)

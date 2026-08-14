@@ -119,13 +119,28 @@ if(NOT RPCS3_3RDPARTY_TEXT MATCHES "VSHift headless integration")
         "target_compile_definitions(3rdparty_openal INTERFACE WITHOUT_OPENAL=1)\n\n")
     vshift_patch_rpcs3_cmake_between(
         "${RPCS3_3RDPARTY_CMAKE}" "# FFMPEG" "# GLEW"
-        "# VSHift headless integration: media decode is exposed through the\n"
-        "# frontend media adapter; keep the core independent of a desktop\n"
-        "# FFmpeg installation while the VSH boot path is brought up.\n"
+        "# VSHift headless integration: use the pinned builtin FFmpeg for\n"
+        "# RSX frame conversion and firmware media modules. No desktop device\n"
+        "# backend is enabled by this target.\n"
         "add_library(3rdparty_ffmpeg INTERFACE)\n"
+        "add_subdirectory(ffmpeg EXCLUDE_FROM_ALL)\n"
+        "set(FFMPEG_LIB_DIR \"\${CMAKE_BINARY_DIR}/3rdparty/ffmpeg/lib\")\n"
+        "find_library(FFMPEG_LIB_AVFORMAT avformat PATHS \${FFMPEG_LIB_DIR} NO_DEFAULT_PATH)\n"
+        "find_library(FFMPEG_LIB_AVCODEC avcodec PATHS \${FFMPEG_LIB_DIR} NO_DEFAULT_PATH)\n"
+        "find_library(FFMPEG_LIB_AVUTIL avutil PATHS \${FFMPEG_LIB_DIR} NO_DEFAULT_PATH)\n"
+        "find_library(FFMPEG_LIB_SWSCALE swscale PATHS \${FFMPEG_LIB_DIR} NO_DEFAULT_PATH)\n"
+        "find_library(FFMPEG_LIB_SWRESAMPLE swresample PATHS \${FFMPEG_LIB_DIR} NO_DEFAULT_PATH)\n"
+        "if(FFMPEG_LIB_AVFORMAT MATCHES \"FFMPEG_LIB_AVFORMAT-NOTFOUND\")\n"
+        "    message(FATAL_ERROR \"VSHift requires the builtin FFmpeg libraries\")\n"
+        "endif()\n"
+        "target_link_libraries(3rdparty_ffmpeg INTERFACE\n"
+        "    \${FFMPEG_LIB_AVFORMAT}\n"
+        "    \${FFMPEG_LIB_AVCODEC}\n"
+        "    \${FFMPEG_LIB_AVUTIL}\n"
+        "    \${FFMPEG_LIB_SWSCALE}\n"
+        "    \${FFMPEG_LIB_SWRESAMPLE})\n"
         "target_include_directories(3rdparty_ffmpeg SYSTEM INTERFACE\n"
-        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/include\")\n"
-        "target_compile_definitions(3rdparty_ffmpeg INTERFACE VSHIFT_RPCS3_NO_HOST_MEDIA=1)\n\n")
+        "    \"\${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/include\")\n\n")
     vshift_patch_rpcs3_cmake_between(
         "${RPCS3_3RDPARTY_CMAKE}" "# CURL" "# MINIUPNP"
         "# VSHift headless integration: network transport is not part of the\n"
@@ -211,6 +226,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             "sceNpClans")
             string(REPLACE
                 "\t\t&ppu_module_manager::${RPCS3_IOS_OMITTED_MODULE},\n"
+                ""
+                RPCS3_PPU_MODULE_TEXT "${RPCS3_PPU_MODULE_TEXT}")
+            string(REPLACE
+                "\t\t&ppu_module_manager::${RPCS3_IOS_OMITTED_MODULE},\r\n"
+                ""
+                RPCS3_PPU_MODULE_TEXT "${RPCS3_PPU_MODULE_TEXT}")
+            string(REPLACE
+                "        &ppu_module_manager::${RPCS3_IOS_OMITTED_MODULE},\n"
                 ""
                 RPCS3_PPU_MODULE_TEXT "${RPCS3_PPU_MODULE_TEXT}")
         endforeach()
