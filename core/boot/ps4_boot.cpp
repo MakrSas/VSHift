@@ -2,6 +2,7 @@
 
 #include "core/cpu/x86_runtime.h"
 #include "core/loader/elf_loader.h"
+#include "core/loader/elf_dynamic.h"
 #include "core/loader/self.h"
 
 #include <span>
@@ -67,6 +68,14 @@ Ps4ModuleReport LoadModule(std::string_view path,
     }
     report.entry = loaded.entry;
     report.mapped_segments = loaded.mappings.size();
+    const auto dynamic = loader::ParseElf64Dynamic(parsed, bytes);
+    report.dynamic_present = dynamic.present;
+    report.needed_libraries = dynamic.needed_libraries;
+    report.dynamic_error = dynamic.error;
+    if (!dynamic.ok()) {
+        report.error = "ELF dynamic metadata is invalid: " + dynamic.error;
+        return report;
+    }
     return report;
 }
 

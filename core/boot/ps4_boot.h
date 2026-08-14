@@ -30,6 +30,9 @@ struct Ps4ModuleReport final {
     bool present = false;
     bool is_self = false;
     bool payload_protected = false;
+    bool dynamic_present = false;
+    std::vector<std::string> needed_libraries;
+    std::string dynamic_error;
     std::uint64_t entry = 0;
     std::size_t mapped_segments = 0;
     std::string error;
