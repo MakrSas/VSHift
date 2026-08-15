@@ -10,6 +10,8 @@ param(
     [switch] $StaticCpu,
     [switch] $TraceEvents,
     [switch] $TraceFs,
+    [switch] $TraceAv,
+    [switch] $TraceThreads,
     [switch] $Interactive
 )
 
@@ -52,6 +54,16 @@ if ($TraceFs) {
     $env:VSHIFT_TRACE_FS = '1'
 } else {
     Remove-Item Env:VSHIFT_TRACE_FS -ErrorAction SilentlyContinue
+}
+if ($TraceAv) {
+    $env:VSHIFT_TRACE_AV = '1'
+} else {
+    Remove-Item Env:VSHIFT_TRACE_AV -ErrorAction SilentlyContinue
+}
+if ($TraceThreads) {
+    $env:VSHIFT_TRACE_THREADS = '1'
+} else {
+    Remove-Item Env:VSHIFT_TRACE_THREADS -ErrorAction SilentlyContinue
 }
 if ($Interactive) {
     $env:VSHIFT_INTERACTIVE = '1'
