@@ -13,6 +13,8 @@ option(VSHIFT_BUILD_IOS "Build the iOS application target" OFF)
 option(VSHIFT_BUILD_RPCS3_CORE "Build the pinned, intact RPCS3 emulator core" OFF)
 option(VSHIFT_RPCS3_WITH_LLVM
     "Enable LLVM PPU/SPU recompilation in the RPCS3 core build" OFF)
+option(VSHIFT_RPCS3_WITH_VULKAN
+    "Build the RPCS3 RSX Vulkan backend (requires a target Vulkan/MoltenVK SDK)" OFF)
 
 if(VSHIFT_BUILD_RPCS3_CORE)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rpcs3_core.cmake)
@@ -295,6 +297,10 @@ if(VSHIFT_BUILD_IOS)
         ${QUARTZ_CORE_FRAMEWORK}
         ${UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK}
     )
+    if(VSHIFT_BUILD_RPCS3_CORE)
+        target_link_libraries(vshift_ios_jit_probe PRIVATE vshift_rpcs3_core)
+        target_compile_definitions(vshift_ios_jit_probe PRIVATE VSHIFT_HAVE_RPCS3_CORE=1)
+    endif()
     set_target_properties(vshift_ios_jit_probe PROPERTIES
         BUNDLE TRUE
         MACOSX_BUNDLE_GUI_IDENTIFIER org.vshift.VSHiftJITProbe
