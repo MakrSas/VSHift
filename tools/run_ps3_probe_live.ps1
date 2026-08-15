@@ -9,6 +9,7 @@ param(
 
     [switch] $StaticCpu,
     [switch] $TraceEvents,
+    [switch] $TraceFs,
     [switch] $Interactive
 )
 
@@ -46,6 +47,11 @@ if ($TraceEvents) {
     $env:VSHIFT_TRACE_EVENTS = '1'
 } else {
     Remove-Item Env:VSHIFT_TRACE_EVENTS -ErrorAction SilentlyContinue
+}
+if ($TraceFs) {
+    $env:VSHIFT_TRACE_FS = '1'
+} else {
+    Remove-Item Env:VSHIFT_TRACE_FS -ErrorAction SilentlyContinue
 }
 if ($Interactive) {
     $env:VSHIFT_INTERACTIVE = '1'
