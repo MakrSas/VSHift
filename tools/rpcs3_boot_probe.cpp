@@ -747,7 +747,7 @@ int main(int argc, char** argv) {
     pump_main_tasks();
     std::cout << "running=" << (Emu.IsRunning() ? "true" : "false") << std::endl;
     const int wait_seconds = use_window
-        ? (std::getenv("VSHIFT_GL_WAIT_SECONDS") ? std::max(1, std::atoi(std::getenv("VSHIFT_GL_WAIT_SECONDS"))) : 60)
+        ? (std::getenv("VSHIFT_GL_WAIT_SECONDS") ? std::max(1, std::atoi(std::getenv("VSHIFT_GL_WAIT_SECONDS"))) : 600)
         : 10;
 	const bool interactive = std::getenv("VSHIFT_INTERACTIVE") != nullptr;
 	const int wait_iterations = wait_seconds * 10;
