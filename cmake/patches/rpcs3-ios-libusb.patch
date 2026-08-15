@@ -1,0 +1,21 @@
+diff --git a/3rdparty/CMakeLists.txt b/3rdparty/CMakeLists.txt
+index 0000000..0000000 100644
+--- a/3rdparty/CMakeLists.txt
++++ b/3rdparty/CMakeLists.txt
+@@ -50,6 +50,9 @@ endif()
+ 
+ # libusb
++if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
++	add_library(usb-1.0-static INTERFACE)
++else()
+ if(CMAKE_SYSTEM_NAME MATCHES "DragonFly|FreeBSD")
+ 	pkg_check_modules(LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0>=1.0 )
+ 	cmake_dependent_option(USE_SYSTEM_LIBUSB "Use system libusb-1.0 as shared library" ON
+@@ -78,6 +81,7 @@ else()
+ 		endif()
+ 	endif()
+ endif()
++endif()
+ 
+ 
+ # hidapi

@@ -24,6 +24,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Apply iOS RPCS3 platform patch
+        run: git -C third_party/rpcs3 apply --whitespace=nowarn cmake/patches/rpcs3-ios-libusb.patch
       - name: Configure Xcode project
         run: >-
           cmake -S . -B build-ios -G Xcode
@@ -53,6 +55,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Apply iOS RPCS3 platform patch
+        run: git -C third_party/rpcs3 apply --whitespace=nowarn cmake/patches/rpcs3-ios-libusb.patch
       - name: Configure device project
         run: >-
           cmake -S . -B build-device -G Xcode

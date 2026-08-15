@@ -14,6 +14,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Apply iOS RPCS3 platform patch
+        run: git -C third_party/rpcs3 apply --whitespace=nowarn cmake/patches/rpcs3-ios-libusb.patch
+
       - name: Configure iOS device project
         run: >-
           cmake -S . -B build-ios-rpcs3 -G Xcode
