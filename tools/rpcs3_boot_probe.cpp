@@ -100,8 +100,9 @@ namespace
 		{
 			std::fprintf(stderr, "VSHIFT_DIALOG_AUTO msg=%s\n", msg.c_str());
 			state = MsgDialogState::Open;
-			if (on_close)
-				on_close(CELL_MSGDIALOG_BUTTON_OK);
+			// Keep the emulated dialog alive until the guest closes it. Calling
+			// on_close synchronously from Create runs cleanup while the RPCS3
+			// main-thread callback is still unwinding and can invalidate msg_info.
 		}
 		void Close(bool success) override
 		{
@@ -126,6 +127,13 @@ namespace
 
 		static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 		{
+			if (message == WM_ERASEBKGND)
+			{
+				RECT client{};
+				GetClientRect(window, &client);
+				FillRect(reinterpret_cast<HDC>(wparam), &client, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+				return 1;
+			}
 			if (message == WM_CLOSE)
 			{
 				DestroyWindow(window);
@@ -149,6 +157,7 @@ namespace
 				klass.lpfnWndProc = &HeadlessGLFrame::window_proc;
 				klass.hInstance = GetModuleHandleA(nullptr);
 				klass.lpszClassName = class_name;
+				klass.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
 				RegisterClassA(&klass);
 			});
 
@@ -319,7 +328,11 @@ namespace
 
 		void flip(const rsx::display_flip_info_t& info) override
 		{
-			++g_flip_count;
+			const auto flip_index = ++g_flip_count;
+			if (flip_index <= 8)
+				std::fprintf(stderr, "VSHIFT_GL_FLIP index=%u count=%llu\n",
+					static_cast<unsigned>(info.buffer),
+					static_cast<unsigned long long>(flip_index));
 			GLGSRender::flip(info);
 			capture_current_frame();
 		}
@@ -452,7 +465,10 @@ int main(int argc, char** argv) {
     const bool use_window = g_use_gl || g_use_vulkan;
     Emu.SetHeadless(!use_window);
     Emu.SetHasGui(use_window);
-    if (!std::getenv("VSHIFT_NO_CONTINUOUS"))
+    // Match RPCS3's native --no-gui boot path by default. Continuous mode is
+    // useful for diagnostics, but it is not part of a normal VSH boot and can
+    // change the guest's startup state machine.
+    if (std::getenv("VSHIFT_CONTINUOUS_BOOT") && !std::getenv("VSHIFT_NO_CONTINUOUS"))
     {
         Emu.SetContinuousMode(true);
     }
@@ -578,6 +594,7 @@ int main(int argc, char** argv) {
 		return std::u32string{U"PS3 system loading"};
 	};
 	callbacks.get_localized_setting = [](const cfg::_base*, u32) { return std::string{}; };
+	callbacks.get_database_config = [](const std::string&) { return std::string{}; };
 	callbacks.play_sound = [](const std::string&, std::optional<f32>) {};
 	callbacks.add_breakpoint = [](u32) {};
 	callbacks.display_sleep_control_supported = [] { return false; };
@@ -655,11 +672,17 @@ int main(int argc, char** argv) {
             {
                 g_cfg.core.libraries_control.set_set({"libgcm_sys.sprx:lle"});
             }
+			if (std::getenv("VSHIFT_GCM_HLE"))
+			{
+				g_cfg.core.libraries_control.set_set({"libgcm_sys.sprx:hle"});
+			}
             // The Vulkan GUI profile uses the interpreter-assisted mode, but
             // the minimal WGL host cannot precompile its interpreter variants
             // without the full RPCS3 shader-dialog service. Keep compilation
             // asynchronous here so VSH can reach its first video-out frame.
-            g_cfg.video.shadermode.set(shader_mode::async_recompiler);
+			// The minimal Win32 frame adapter exposes one WGL context. Use the
+			// single-threaded path until shared worker contexts are implemented.
+			g_cfg.video.shadermode.set(shader_mode::recompiler);
             g_cfg.video.renderdoc_compatiblity.set(false);
             g_cfg.video.force_cpu_blit_processing.set(false);
             g_cfg.video.write_color_buffers.set(false);
@@ -698,6 +721,8 @@ int main(int argc, char** argv) {
     g_cfg.core.ppu_threads.set(2);
     if (std::getenv("VSHIFT_PPU_STATIC"))
         g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
+    if (std::getenv("VSHIFT_SPU_STATIC"))
+        g_cfg.core.spu_decoder.set(spu_decoder_type::_static);
     if (std::getenv("VSHIFT_FORCE_LLE"))
     {
         std::set<std::string> libraries;
@@ -722,13 +747,24 @@ int main(int argc, char** argv) {
               << std::endl;
     const bool gui_boot = std::getenv("VSHIFT_GUI_BOOT") != nullptr;
     const bool soft_boot = std::getenv("VSHIFT_SOFT_BOOT") != nullptr;
-    const bool direct_boot = !gui_boot && !soft_boot;
-    const auto boot_mode = gui_boot ? cfg_mode::custom : cfg_mode::continuous;
+    const bool direct_boot = std::getenv("VSHIFT_DIRECT_BOOT") != nullptr;
+	// Match RPCS3's native BootVSH/no-gui path. Continuous mode is reserved for
+	// an explicit guest-to-guest transition diagnostic.
+	const auto boot_mode = std::getenv("VSHIFT_CONTINUOUS_BOOT")
+		? cfg_mode::continuous
+		: cfg_mode::custom;
     if (gui_boot)
     {
         // Match main_window::BootVSH(): custom BootGame is preceded by the
         // normal graceful shutdown/state transition of the GUI host.
         Emu.GracefulShutdown(false);
+    }
+    if (!std::getenv("VSHIFT_CONTINUOUS_BOOT"))
+    {
+        // This is what RPCS3's no-gui frontend does before BootGame. It lets
+        // the firmware VSH take the normal force-boot path without enabling
+        // the continuous-boot mode used for guest transitions.
+        Emu.SetForceBoot(true);
     }
     const auto result = Emu.BootGame(vsh_boot_path, "", direct_boot, boot_mode);
     std::cout << "boot_result=" << static_cast<int>(result)
@@ -751,7 +787,6 @@ int main(int argc, char** argv) {
         : 10;
 	const bool interactive = std::getenv("VSHIFT_INTERACTIVE") != nullptr;
 	const int wait_iterations = wait_seconds * 10;
-	bool finalized_start = false;
 	for (int i = 0; interactive || i < wait_iterations; ++i) {
 		pump_window_messages();
 		if (interactive && g_window_closed.load())
@@ -759,15 +794,23 @@ int main(int argc, char** argv) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		pump_window_messages();
 		pump_main_tasks();
-		if (!finalized_start && Emu.IsStarting())
+		// RSXThread queues Emulator::RunPPU() through call_from_main_thread
+		// after its backend is initialized. Do not finalize the transition here:
+		// doing so races that queued RunPPU call and makes its IsStarting()
+		// invariant fail, leaving the guest without a running PPU.
+		if (std::getenv("VSHIFT_TRACE_BOOT") && (i % 50) == 0)
 		{
-			if (auto* render = rsx::get_current_renderer(); render && render->is_initialized)
-			{
-				// The regular Qt event loop completes this transition after the
-				// RSX thread publishes readiness. Keep the same invariant here.
-				Emu.FinalizeRunRequest();
-				finalized_start = true;
-			}
+			std::fprintf(stderr, "VSHIFT_BOOT heartbeat t=%ds state=%d flips=%llu\n",
+				i / 10, static_cast<int>(Emu.GetStatus(false)),
+				static_cast<unsigned long long>(g_flip_count.load()));
+			idm::select<named_thread<ppu_thread>>([](u32 id, named_thread<ppu_thread>& thread) {
+				std::fprintf(stderr, "VSHIFT_BOOT ppu id=0x%x cia=0x%x exec_bytes=%llu state=0x%x stopped=%s func=%s\n",
+					id, thread.cia, static_cast<unsigned long long>(thread.exec_bytes),
+					static_cast<unsigned>(thread.state.load()),
+					thread.is_stopped() ? "true" : "false", thread.current_function ? thread.current_function : "-");
+			});
+			if (auto* render = rsx::get_current_renderer(); render && render->ctrl)
+				std::fprintf(stderr, "VSHIFT_BOOT rsx get=0x%x put=0x%x ref=0x%x\n", +render->ctrl->get, +render->ctrl->put, +render->ctrl->ref);
 		}
 	}
     std::cout << "state_after_" << wait_seconds << "s"
@@ -781,7 +824,7 @@ int main(int argc, char** argv) {
             +render->ctrl->get, +render->ctrl->put, +render->ctrl->ref);
     }
     idm::select<named_thread<ppu_thread>>([](u32 id, named_thread<ppu_thread>& thread) {
-        std::fprintf(stderr, "VSHIFT_PPU_THREAD id=0x%x cia=0x%x exec_bytes=%llu stopped=%s func=%s\\n",
+        std::fprintf(stderr, "VSHIFT_PPU_THREAD id=0x%x cia=0x%x exec_bytes=%llu stopped=%s func=%s\n",
             id, thread.cia, static_cast<unsigned long long>(thread.exec_bytes),
             thread.is_stopped() ? "true" : "false", thread.current_function ? thread.current_function : "-");
     });
