@@ -30,7 +30,6 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-zlib
-            mingw-w64-ucrt-x86_64-ffmpeg
             mingw-w64-ucrt-x86_64-llvm
 
       - name: Configure
