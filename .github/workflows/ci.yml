@@ -29,6 +29,8 @@ jobs:
           -DCMAKE_OSX_SYSROOT=iphonesimulator
           -DCMAKE_OSX_ARCHITECTURES=arm64
           -DVSHIFT_BUILD_IOS=ON
+          -DVSHIFT_BUILD_RPCS3_CORE=ON
+          -DVSHIFT_RPCS3_WITH_VULKAN=OFF
           -DVSHIFT_BUILD_TESTS=OFF
       - name: Build unsigned simulator app
         run: >-
@@ -54,6 +56,8 @@ jobs:
           -DCMAKE_OSX_SYSROOT=iphoneos
           -DCMAKE_OSX_ARCHITECTURES=arm64
           -DVSHIFT_BUILD_IOS=ON
+          -DVSHIFT_BUILD_RPCS3_CORE=ON
+          -DVSHIFT_RPCS3_WITH_VULKAN=OFF
           -DVSHIFT_BUILD_TESTS=OFF
       - name: Build unsigned device app
         run: >-
