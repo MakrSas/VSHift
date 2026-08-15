@@ -22,6 +22,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Configure Xcode project
         run: >-
           cmake -S . -B build-ios -G Xcode
@@ -49,6 +51,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Configure device project
         run: >-
           cmake -S . -B build-device -G Xcode
