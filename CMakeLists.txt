@@ -288,6 +288,9 @@ if(VSHIFT_BUILD_IOS)
     find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
     find_library(CORE_GRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
     find_library(QUARTZ_CORE_FRAMEWORK QuartzCore REQUIRED)
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(METAL_KIT_FRAMEWORK MetalKit REQUIRED)
+    find_library(CORE_IMAGE_FRAMEWORK CoreImage REQUIRED)
     find_library(UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK UniformTypeIdentifiers REQUIRED)
     target_link_libraries(vshift_ios_jit_probe PRIVATE
         vshift_ps3_core
@@ -295,6 +298,9 @@ if(VSHIFT_BUILD_IOS)
         ${FOUNDATION_FRAMEWORK}
         ${CORE_GRAPHICS_FRAMEWORK}
         ${QUARTZ_CORE_FRAMEWORK}
+        ${METAL_FRAMEWORK}
+        ${METAL_KIT_FRAMEWORK}
+        ${CORE_IMAGE_FRAMEWORK}
         ${UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK}
     )
     if(VSHIFT_BUILD_RPCS3_CORE)

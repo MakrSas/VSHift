@@ -1,0 +1,11 @@
+diff --git a/3rdparty/CMakeLists.txt b/3rdparty/CMakeLists.txt
+--- a/3rdparty/CMakeLists.txt
++++ b/3rdparty/CMakeLists.txt
+@@ -53,1 +53,4 @@
+ # libusb
++if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
++	add_library(usb-1.0-static INTERFACE)
++else()
+@@ -85,1 +88,2 @@
+ endif()
++endif()

@@ -5,11 +5,41 @@ set(VSHIFT_RPCS3_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rpcs3"
     CACHE PATH "Path to the pinned RPCS3 source tree")
 
+# iOS must never mutate the checked-out RPCS3 submodule. Build from an
+# isolated, patched copy so the same checkout remains usable by the Windows
+# probe and by the desktop build.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(VSHIFT_RPCS3_BUILD_SOURCE_DIR
+        "${CMAKE_BINARY_DIR}/rpcs3-ios-source")
+    find_program(VSHIFT_PATCH_EXECUTABLE patch REQUIRED)
+    file(REMOVE_RECURSE "${VSHIFT_RPCS3_BUILD_SOURCE_DIR}")
+    file(COPY "${VSHIFT_RPCS3_SOURCE_DIR}/"
+         DESTINATION "${VSHIFT_RPCS3_BUILD_SOURCE_DIR}")
+    file(GLOB VSHIFT_RPCS3_IOS_PATCHES
+         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/rpcs3-ios-*.patch")
+    list(SORT VSHIFT_RPCS3_IOS_PATCHES)
+    foreach(VSHIFT_RPCS3_IOS_PATCH IN LISTS VSHIFT_RPCS3_IOS_PATCHES)
+        execute_process(
+            COMMAND "${VSHIFT_PATCH_EXECUTABLE}" -p1 --forward --batch
+                    -i "${VSHIFT_RPCS3_IOS_PATCH}"
+            WORKING_DIRECTORY "${VSHIFT_RPCS3_BUILD_SOURCE_DIR}"
+            RESULT_VARIABLE VSHIFT_RPCS3_PATCH_RESULT)
+        if(NOT VSHIFT_RPCS3_PATCH_RESULT EQUAL 0)
+            message(FATAL_ERROR
+                "Failed to apply iOS RPCS3 patch: ${VSHIFT_RPCS3_IOS_PATCH}")
+        endif()
+    endforeach()
+else()
+    set(VSHIFT_RPCS3_BUILD_SOURCE_DIR "${VSHIFT_RPCS3_SOURCE_DIR}")
+endif()
+
 if(NOT EXISTS "${VSHIFT_RPCS3_SOURCE_DIR}/rpcs3/Emu/CMakeLists.txt")
     message(FATAL_ERROR
         "VSHIFT_BUILD_RPCS3_CORE requires third_party/rpcs3. "
         "Run: git submodule update --init --recursive")
 endif()
+
+set(VSHIFT_RPCS3_SOURCE_DIR "${VSHIFT_RPCS3_BUILD_SOURCE_DIR}")
 
 enable_language(C)
 
@@ -46,6 +76,21 @@ set(USE_SYSTEM_VULKAN_MEMORY_ALLOCATOR OFF CACHE BOOL "" FORCE)
 set(USE_SYSTEM_WOLFSSL OFF CACHE BOOL "" FORCE)
 set(USE_SYSTEM_ZLIB OFF CACHE BOOL "" FORCE)
 set(USE_SYSTEM_ZSTD OFF CACHE BOOL "" FORCE)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # Qt, Win32, OpenGL, SDL, desktop audio/input and USB discovery are not
+    # host backends for the iOS target. RSX presentation is supplied later by
+    # the native iOS renderer; keeping the core build headless is intentional.
+    set(USE_VULKAN OFF CACHE BOOL "" FORCE)
+    set(USE_SYSTEM_CURL OFF CACHE BOOL "" FORCE)
+    set(USE_SYSTEM_OPENAL OFF CACHE BOOL "" FORCE)
+    set(USE_SYSTEM_LIBUSB OFF CACHE BOOL "" FORCE)
+    set(USE_SYSTEM_SDL OFF CACHE BOOL "" FORCE)
+    set(USE_SYSTEM_OPENCV OFF CACHE BOOL "" FORCE)
+    set(USE_SYSTEM_RTMIDI OFF CACHE BOOL "" FORCE)
+    set(USE_SYSTEM_CUBEB OFF CACHE BOOL "" FORCE)
+    add_compile_definitions(RPCS3_IOS=1 RPCS3_HEADLESS=1)
+endif()
 
 # RPCS3's root normally generates this header before entering Emu.
 include("${VSHIFT_RPCS3_SOURCE_DIR}/rpcs3/git-version.cmake")

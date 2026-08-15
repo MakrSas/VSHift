@@ -30,8 +30,6 @@ jobs:
         run: |
           test -f third_party/rpcs3/CMakeLists.txt
           git -C third_party/rpcs3 rev-parse HEAD
-      - name: Apply iOS RPCS3 platform patch
-        run: git -C third_party/rpcs3 apply --whitespace=nowarn cmake/patches/rpcs3-ios-libusb.patch
       - name: Configure Xcode project
         run: >-
           cmake -S . -B build-ios -G Xcode
@@ -84,8 +82,6 @@ jobs:
         run: |
           test -f third_party/rpcs3/CMakeLists.txt
           git -C third_party/rpcs3 rev-parse HEAD
-      - name: Apply iOS RPCS3 platform patch
-        run: git -C third_party/rpcs3 apply --whitespace=nowarn cmake/patches/rpcs3-ios-libusb.patch
       - name: Configure device project
         run: >-
           cmake -S . -B build-device -G Xcode

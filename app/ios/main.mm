@@ -1,4 +1,6 @@
 #import <UIKit/UIKit.h>
+#import <MetalKit/MetalKit.h>
+#import <CoreImage/CoreImage.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include "cores/ps3/ps3_core.h"
@@ -16,6 +18,111 @@
 
 #if defined(VSHIFT_HAVE_RPCS3_CORE)
 extern "C" void vshift_rpcs3_ios_link_core();
+#include "Emu/System.h"
+#include "Emu/RSX/GSFrameBase.h"
+#endif
+
+#if defined(VSHIFT_HAVE_RPCS3_CORE)
+// Native iOS presentation bridge. The bytes arrive only through RPCS3's
+// GSFrameBase::present_frame; no synthetic frame is generated here.
+@interface VSHiftMetalFrameView : MTKView
+@property(nonatomic, strong) CIContext *vshiftCIContext;
+@property(nonatomic, strong) NSData *vshiftFrameData;
+@property(nonatomic, assign) NSUInteger vshiftPitch;
+@property(nonatomic, assign) NSUInteger vshiftWidth;
+@property(nonatomic, assign) NSUInteger vshiftHeight;
+@property(nonatomic, assign) BOOL vshiftBGRA;
+@end
+
+@implementation VSHiftMetalFrameView
+- (instancetype)initWithFrame:(CGRect)frame {
+    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    self = [super initWithFrame:frame device:device];
+    if (self) {
+        self.enableSetNeedsDisplay = NO;
+        self.paused = NO;
+        self.framebufferOnly = NO;
+        self.autoResizeDrawable = YES;
+        self.vshiftCIContext = [[CIContext alloc] initWithMTLDevice:device];
+    }
+    return self;
+}
+
+- (void)drawRect:(CGRect)rect {
+    (void)rect;
+    id<MTLCommandQueue> queue = [self.device newCommandQueue];
+    id<CAMetalDrawable> drawable = self.currentDrawable;
+    NSData *data = self.vshiftFrameData;
+    if (!queue || !drawable || !data || self.vshiftWidth == 0 || self.vshiftHeight == 0) return;
+    CIFormat format = self.vshiftBGRA ? kCIFormatBGRA8 : kCIFormatRGBA8;
+    CIImage *image = [[CIImage alloc] initWithBitmapData:data
+                                              bytesPerRow:self.vshiftPitch
+                                                 size:CGSizeMake(self.vshiftWidth, self.vshiftHeight)
+                                               format:format
+                                           colorSpace:CGColorSpaceCreateDeviceRGB()];
+    if (!image) return;
+    CGFloat sx = drawable.texture.width / image.extent.size.width;
+    CGFloat sy = drawable.texture.height / image.extent.size.height;
+    image = [image imageByApplyingTransform:CGAffineTransformMakeScale(sx, sy)];
+    id<MTLCommandBuffer> command = [queue commandBuffer];
+    [self.vshiftCIContext render:image toMTLTexture:drawable.texture
+                     commandBuffer:command bounds:CGRectMake(0, 0, drawable.texture.width, drawable.texture.height)
+                       colorSpace:CGColorSpaceCreateDeviceRGB()];
+    [command presentDrawable:drawable];
+    [command commit];
+}
+@end
+
+class VSHiftIOSGSFrame final : public GSFrameBase {
+    __weak VSHiftMetalFrameView *m_view = nil;
+public:
+    explicit VSHiftIOSGSFrame(VSHiftMetalFrameView *view) : m_view(view) {}
+    void close() override {}
+    void reset() override {}
+    bool shown() override { return m_view != nil && !m_view.hidden; }
+    void hide() override { m_view.hidden = YES; }
+    void show() override { m_view.hidden = NO; }
+    void toggle_fullscreen() override {}
+    void delete_context(draw_context_t) override {}
+    draw_context_t make_context() override { return {}; }
+    void set_current(draw_context_t) override {}
+    void flip(draw_context_t, bool = false) override { [m_view draw]; }
+    int client_width() override { return (int)m_view.drawableSize.width; }
+    int client_height() override { return (int)m_view.drawableSize.height; }
+    f64 client_display_rate() override { return 60.0; }
+    bool has_alpha() override { return false; }
+    display_handle_t handle() const override { return {}; }
+    bool can_consume_frame() const override { return true; }
+    void present_frame(std::vector<u8>&& data, u32 pitch, u32 width, u32 height, bool is_bgra) const override {
+        VSHiftMetalFrameView *view = m_view;
+        if (!view) return;
+        NSData *frame = [NSData dataWithBytes:data.data() length:data.size()];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            view.vshiftFrameData = frame;
+            view.vshiftPitch = pitch;
+            view.vshiftWidth = width;
+            view.vshiftHeight = height;
+            view.vshiftBGRA = is_bgra;
+            [view draw];
+        });
+    }
+    void take_screenshot(std::vector<u8>&&, u32, u32, bool) override {}
+    void update_title(double = 0.0) override {}
+};
+
+static VSHiftMetalFrameView *g_vshiftIOSFrameView = nil;
+
+extern "C" UIView *vshift_rpcs3_ios_create_video_view(CGRect frame) {
+    g_vshiftIOSFrameView = [[VSHiftMetalFrameView alloc] initWithFrame:frame];
+    return g_vshiftIOSFrameView;
+}
+
+extern "C" void vshift_rpcs3_ios_install_gs_frame(EmuCallbacks &callbacks) {
+    callbacks.get_gs_frame = []() -> std::unique_ptr<GSFrameBase> {
+        if (!g_vshiftIOSFrameView) return {};
+        return std::make_unique<VSHiftIOSGSFrame>(g_vshiftIOSFrameView);
+    };
+}
 #endif
 
 typedef NS_ENUM(NSInteger, VSHiftPS3Screen) {
@@ -33,6 +140,9 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
 
 @interface VSHiftDisplayViewController : UIViewController <UIGestureRecognizerDelegate>
 @property(nonatomic, strong) UIImageView *framebufferView;
+#if defined(VSHIFT_HAVE_RPCS3_CORE)
+@property(nonatomic, strong) VSHiftMetalFrameView *metalFramebufferView;
+#endif
 @property(nonatomic, strong) UIVisualEffectView *statusPill;
 @property(nonatomic, strong) UILabel *displayStatusLabel;
 @property(nonatomic, strong) UIActivityIndicatorView *statusActivity;
@@ -79,6 +189,14 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
     self.framebufferView.contentMode = UIViewContentModeScaleAspectFit;
     self.framebufferView.accessibilityLabel = @"PS3 display";
     [self.view addSubview:self.framebufferView];
+#if defined(VSHIFT_HAVE_RPCS3_CORE)
+    self.metalFramebufferView = [[VSHiftMetalFrameView alloc] initWithFrame:CGRectZero];
+    self.metalFramebufferView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.metalFramebufferView.accessibilityLabel = @"PS3 display frame output";
+    [self.view addSubview:self.metalFramebufferView];
+    self.framebufferView.hidden = YES;
+    g_vshiftIOSFrameView = self.metalFramebufferView;
+#endif
 
     self.statusPill = [[UIVisualEffectView alloc]
         initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark]];
@@ -150,6 +268,12 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
         [self.framebufferView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [self.framebufferView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
         [self.framebufferView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+#if defined(VSHIFT_HAVE_RPCS3_CORE)
+        [self.metalFramebufferView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.metalFramebufferView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.metalFramebufferView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [self.metalFramebufferView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+#endif
         [self.statusPill.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [self.statusPill.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
         [self.statusPill.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor constant:24.0],
