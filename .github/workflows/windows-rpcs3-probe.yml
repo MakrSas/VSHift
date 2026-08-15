@@ -16,6 +16,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Apply VSH headless runtime adapter
+        shell: pwsh
+        run: git apply --whitespace=nowarn --directory=third_party/rpcs3 cmake/patches/rpcs3-headless-runtime.patch
+
       - name: Install UCRT64 toolchain and LLVM
         uses: msys2/setup-msys2@v2
         with:

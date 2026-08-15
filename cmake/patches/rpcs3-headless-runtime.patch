@@ -1,0 +1,40 @@
+diff --git a/rpcs3/Emu/System.cpp b/rpcs3/Emu/System.cpp
+--- a/rpcs3/Emu/System.cpp
++++ b/rpcs3/Emu/System.cpp
+@@ -2423,4 +2423,11 @@
+ 		else
+ 		{
+ 			g_ps3_process_info.self_info.valid = false;
++			if (std::getenv("VSHIFT_HEADLESS_GL") && elf_path.ends_with("vsh.self"))
++			{
++				// The standalone probe receives RPCS3's already-decrypted VSH ELF.
++				// Preserve the authority marker normally supplied by SELF metadata.
++				g_ps3_process_info.self_info.valid = true;
++				g_ps3_process_info.self_info.prog_id_hdr.program_authority_id = 0x10700005FF000001L;
++			}
+ 		}
+@@ -2755,11 +2755,14 @@
+ 	ensure(IsStarting());
+ 
+ 	bool signalled_thread = false;
++	bool protected_stop = false;
+ 
+ 	// Run main thread
+ 	idm::select<named_thread<ppu_thread>>([&](u32, named_thread<ppu_thread>& cpu)
+ 	{
+-		if (std::exchange(cpu.stop_flag_removal_protection, false))
++		protected_stop = std::exchange(cpu.stop_flag_removal_protection, false);
++
++		if (!std::getenv("VSHIFT_HEADLESS_GL") && protected_stop)
+ 		{
+ 			return;
+ 		}
+@@ -2771,7 +2785,7 @@
+ 		signalled_thread = true;
+ 	});
+ 
+-	if (!signalled_thread)
++	if (!signalled_thread || (std::getenv("VSHIFT_HEADLESS_GL") && protected_stop))
+ 	{
+ 		FixGuestTime();
+ 		FinalizeRunRequest();
