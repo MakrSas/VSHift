@@ -298,6 +298,9 @@ if(VSHIFT_BUILD_IOS)
         ${UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK}
     )
     if(VSHIFT_BUILD_RPCS3_CORE)
+        target_sources(vshift_ios_jit_probe PRIVATE
+            app/ios/rpcs3_ios_anchor.cpp
+        )
         target_link_libraries(vshift_ios_jit_probe PRIVATE vshift_rpcs3_core)
         target_compile_definitions(vshift_ios_jit_probe PRIVATE VSHIFT_HAVE_RPCS3_CORE=1)
     endif()

@@ -14,6 +14,10 @@
 #include <limits>
 #include <span>
 
+#if defined(VSHIFT_HAVE_RPCS3_CORE)
+extern "C" void vshift_rpcs3_ios_link_core();
+#endif
+
 typedef NS_ENUM(NSInteger, VSHiftPS3Screen) {
     VSHiftPS3ScreenLibrary = 0,
     VSHiftPS3ScreenStart,
@@ -1085,6 +1089,11 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
 }
 
 - (void)preparePs3VshBootstrap {
+#if defined(VSHIFT_HAVE_RPCS3_CORE)
+    // Force-link the platform-independent RPCS3 archive without its Qt
+    // desktop frontend. The native RSX callback bridge is added separately.
+    vshift_rpcs3_ios_link_core();
+#endif
     NSURL *url = self.ps3FirmwareURL;
     if (url == nil) {
         [self setPS3DisplayStatus:@"Import PS3UPDAT.PUP first."];

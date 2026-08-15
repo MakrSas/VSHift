@@ -1,0 +1,34 @@
+name: iOS RPCS3 core compile
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ios-rpcs3-core:
+    name: iOS RPCS3 core compile
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository and RPCS3
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure iOS device project
+        run: >-
+          cmake -S . -B build-ios-rpcs3 -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_SYSROOT=iphoneos
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DVSHIFT_BUILD_IOS=ON
+          -DVSHIFT_BUILD_RPCS3_CORE=ON
+          -DVSHIFT_RPCS3_WITH_LLVM=OFF
+          -DVSHIFT_RPCS3_WITH_VULKAN=OFF
+          -DVSHIFT_BUILD_TESTS=OFF
+
+      - name: Compile iOS app with RPCS3 core linked
+        run: >-
+          cmake --build build-ios-rpcs3 --config Release
+          --target vshift_ios_jit_probe
+          --
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
