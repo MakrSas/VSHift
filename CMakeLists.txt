@@ -11,6 +11,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(VSHIFT_BUILD_TESTS "Build host-side tests" ON)
 option(VSHIFT_BUILD_IOS "Build the iOS application target" OFF)
 option(VSHIFT_BUILD_RPCS3_CORE "Build the pinned, intact RPCS3 emulator core" OFF)
+option(VSHIFT_RPCS3_WITH_LLVM
+    "Enable LLVM PPU/SPU recompilation in the RPCS3 core build" OFF)
 
 if(VSHIFT_BUILD_RPCS3_CORE)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rpcs3_core.cmake)

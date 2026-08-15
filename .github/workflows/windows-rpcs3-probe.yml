@@ -1,0 +1,67 @@
+name: Windows RPCS3 PS3 probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ps3]
+
+jobs:
+  build-rpcs3-probe:
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository and RPCS3
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install UCRT64 toolchain and LLVM
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-llvm
+
+      - name: Configure
+        shell: msys2 {0}
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DVSHIFT_BUILD_TESTS=OFF
+          -DVSHIFT_BUILD_RPCS3_CORE=ON
+          -DVSHIFT_RPCS3_WITH_LLVM=ON
+          -DLLVM_DIR=/ucrt64/lib/cmake/llvm
+
+      - name: Build probe
+        shell: msys2 {0}
+        run: cmake --build build --target vshift_rpcs3_boot_probe --parallel 2
+
+      - name: Package executable and runtime DLLs
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist
+          cp build/vshift_rpcs3_boot_probe.exe dist/
+          ldd dist/vshift_rpcs3_boot_probe.exe \
+            | awk '/\/ucrt64\/bin\// { print $3 }' \
+            | sort -u \
+            | xargs -r -n1 cp -t dist
+          printf '%s\n' \
+            'VSHift PS3 RPCS3 probe' \
+            '' \
+            'Run from a terminal with the extracted PS3 dev_flash path:' \
+            '  vshift_rpcs3_boot_probe.exe C:\\path\\to\\dev_flash --gl' \
+            '' \
+            'Optional: set VSHIFT_INTERACTIVE=1 for a persistent fullscreen window.' \
+            > dist/README.txt
+
+      - name: Upload Windows probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: vshift-rpcs3-probe-windows
+          path: dist
