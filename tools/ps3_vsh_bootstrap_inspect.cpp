@@ -590,10 +590,12 @@ int main(int argc, char** argv) {
                       << " r13=0x" << ppu.registers().gpr[13]
                       << " r31=0x" << ppu.registers().gpr[31]
                       << std::dec << '\n';
-            for (const auto address : {ppu.registers().gpr[13] - 0x7030,
-                                       ppu.registers().gpr[31] + 0x18,
-                                       0x70d148ull, 0x70d188ull,
-                                       0x70d318ull}) {
+            const std::array<std::uint64_t, 5> addresses{
+                ppu.registers().gpr[13] - 0x7030,
+                ppu.registers().gpr[31] + 0x18,
+                0x70d148ull, 0x70d188ull,
+                0x70d318ull};
+            for (const auto address : addresses) {
                 std::array<std::uint8_t, 0x10> bytes{};
                 if (memory.Read(address, bytes).ok()) {
                     std::cout << "    data 0x" << std::hex << address << ":";
