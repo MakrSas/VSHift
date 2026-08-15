@@ -11,12 +11,16 @@
 
 namespace vshift::cpu {
 
+using PpuVector = std::array<std::uint8_t, 16>;
+
 struct PpuRegisters final {
     std::array<std::uint64_t, 32> gpr{};
     std::array<std::uint64_t, 32> fpr{};
+    std::array<PpuVector, 32> vr{};
     std::uint64_t pc = 0;
     std::uint64_t lr = 0;
     std::uint64_t ctr = 0;
+    std::uint32_t xer = 0;
     std::uint32_t condition_register = 0;
 };
 
@@ -39,6 +43,13 @@ struct PpuRunResult final {
 struct PpuTraceEntry final {
     std::uint64_t pc = 0;
     std::uint32_t instruction = 0;
+    std::uint64_t r0 = 0;
+    std::uint64_t r2 = 0;
+    std::uint64_t r3 = 0;
+    std::uint64_t r4 = 0;
+    std::uint64_t r5 = 0;
+    std::uint64_t r9 = 0;
+    std::uint64_t ctr = 0;
 };
 
 using PpuSyscallHandler =

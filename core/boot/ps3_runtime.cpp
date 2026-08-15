@@ -25,6 +25,75 @@ std::uint32_t ReadU32BE(std::span<const std::uint8_t> bytes) noexcept {
            bytes[3];
 }
 
+bool LooksLikeGuestString(const memory::GuestMemory& memory,
+                          std::uint32_t address) {
+    if (address == 0) return false;
+    std::array<std::uint8_t, 64> bytes{};
+    if (!memory.Read(address, bytes).ok()) return false;
+    for (const auto byte : bytes) {
+        if (byte == 0) return true;
+        if (byte < 0x20 || byte > 0x7e) return false;
+    }
+    return false;
+}
+
+std::vector<std::uint32_t> DiscoverVshImportRecords(
+    const loader::Ps3SelfImage& image,
+    const memory::GuestMemory& memory) {
+    std::vector<std::uint32_t> records;
+    for (std::size_t program_index = 0;
+         program_index < image.program_headers.size(); ++program_index) {
+        const auto& program = image.program_headers[program_index];
+        if (program.type != 1 || program.file_size < 0x2c) continue;
+        const auto section = std::find_if(
+            image.sections.begin(), image.sections.end(),
+            [program_index](const auto& candidate) {
+                return candidate.type == 2 &&
+                       candidate.program_index == program_index;
+            });
+        if (section == image.sections.end() || section->bytes.size() < 0x2c) {
+            continue;
+        }
+        const auto limit = std::min<std::uint64_t>(
+            program.file_size, section->bytes.size());
+        for (std::uint64_t offset = 0; offset + 0x2c <= limit; offset += 4) {
+            const auto record_bytes = std::span<const std::uint8_t>(section->bytes)
+                .subspan(static_cast<std::size_t>(offset), 4);
+            if (ReadU32BE(record_bytes) != 0x2c000001u) continue;
+            const auto guest_address = program.virtual_address + offset;
+            if (guest_address > std::numeric_limits<std::uint32_t>::max()) continue;
+            std::array<std::uint8_t, 0x24> record{};
+            if (!memory.Read(guest_address, record).ok()) continue;
+            const auto attributes_and_functions = ReadU32BE(
+                std::span<const std::uint8_t>(record).subspan(0x04, 4));
+            const auto variables_and_tls = ReadU32BE(
+                std::span<const std::uint8_t>(record).subspan(0x08, 4));
+            const auto name = ReadU32BE(std::span<const std::uint8_t>(record).subspan(0x10, 4));
+            const auto nids = ReadU32BE(std::span<const std::uint8_t>(record).subspan(0x14, 4));
+            const auto addrs = ReadU32BE(std::span<const std::uint8_t>(record).subspan(0x18, 4));
+            const auto variable_nids = ReadU32BE(
+                std::span<const std::uint8_t>(record).subspan(0x1c, 4));
+            const auto variable_stubs = ReadU32BE(
+                std::span<const std::uint8_t>(record).subspan(0x20, 4));
+            const auto function_count = static_cast<std::uint16_t>(
+                attributes_and_functions);
+            const auto variable_count = static_cast<std::uint16_t>(
+                variables_and_tls >> 16);
+            const auto valid_functions = function_count != 0 &&
+                                         nids != 0 && addrs != 0;
+            const auto valid_variables = variable_count != 0 &&
+                                         variable_nids != 0 &&
+                                         variable_stubs != 0;
+            if (!LooksLikeGuestString(memory, name) ||
+                (!valid_functions && !valid_variables)) {
+                continue;
+            }
+            records.push_back(static_cast<std::uint32_t>(guest_address));
+        }
+    }
+    return records;
+}
+
 } // namespace
 
 Ps3Runtime::Ps3Runtime()
@@ -168,7 +237,13 @@ Ps3RuntimeLoadResult Ps3Runtime::LoadFirmware(
     ppu_.registers().gpr[3] = 1;
     ppu_.registers().gpr[4] = argv_address;
     ppu_.registers().gpr[5] = envp_address;
-    lv2_ = std::make_unique<hle::Ps3Lv2>(memory_, &firmware_files_);
+    lv2_ = std::make_unique<hle::Ps3Lv2>(
+        memory_, &firmware_files_, static_cast<std::uint32_t>(toc_address));
+    const auto vsh_import_records = DiscoverVshImportRecords(self.image, memory_);
+    std::string linker_error;
+    if (!lv2_->RegisterMainVshImports(vsh_import_records, linker_error)) {
+        return Fail("PS3 VSH import table setup failed: " + linker_error);
+    }
     load_info_.package_version = parsed.header.package_version;
     load_info_.image_version = parsed.header.image_version;
     load_info_.decrypted_section_count = decrypted_section_count;

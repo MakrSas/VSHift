@@ -29,7 +29,9 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
 
 @interface VSHiftDisplayViewController : UIViewController <UIGestureRecognizerDelegate>
 @property(nonatomic, strong) UIImageView *framebufferView;
+@property(nonatomic, strong) UIVisualEffectView *statusPill;
 @property(nonatomic, strong) UILabel *displayStatusLabel;
+@property(nonatomic, strong) UIActivityIndicatorView *statusActivity;
 @property(nonatomic, strong) UIVisualEffectView *controlBar;
 @property(nonatomic, strong) UIButton *pauseButton;
 @property(nonatomic, copy) dispatch_block_t closeHandler;
@@ -48,6 +50,11 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
     configuration.preferredSymbolConfigurationForImage =
         [UIImageSymbolConfiguration configurationWithPointSize:19.0 weight:UIImageSymbolWeightMedium];
     configuration.baseForegroundColor = UIColor.whiteColor;
+    UIBackgroundConfiguration *background = [UIBackgroundConfiguration clearConfiguration];
+    background.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.13];
+    background.cornerRadius = 22.0;
+    configuration.background = background;
+    configuration.contentInsets = NSDirectionalEdgeInsetsMake(0.0, 0.0, 0.0, 0.0);
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.configuration = configuration;
     button.translatesAutoresizingMaskIntoConstraints = NO;
@@ -69,6 +76,14 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
     self.framebufferView.accessibilityLabel = @"PS3 display";
     [self.view addSubview:self.framebufferView];
 
+    self.statusPill = [[UIVisualEffectView alloc]
+        initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark]];
+    self.statusPill.translatesAutoresizingMaskIntoConstraints = NO;
+    self.statusPill.layer.cornerRadius = 18.0;
+    self.statusPill.layer.cornerCurve = kCACornerCurveContinuous;
+    self.statusPill.clipsToBounds = YES;
+    [self.view addSubview:self.statusPill];
+
     self.displayStatusLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     self.displayStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.displayStatusLabel.text = @"Starting virtual console…";
@@ -76,8 +91,27 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
     self.displayStatusLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     self.displayStatusLabel.adjustsFontForContentSizeCategory = YES;
     self.displayStatusLabel.textAlignment = NSTextAlignmentCenter;
-    self.displayStatusLabel.numberOfLines = 0;
-    [self.view addSubview:self.displayStatusLabel];
+    self.displayStatusLabel.numberOfLines = 2;
+    self.displayStatusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    self.displayStatusLabel.adjustsFontSizeToFitWidth = YES;
+    [self.displayStatusLabel setContentCompressionResistancePriority:UILayoutPriorityDefaultLow
+                                                              forAxis:UILayoutConstraintAxisHorizontal];
+
+    self.statusActivity = [[UIActivityIndicatorView alloc]
+        initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    self.statusActivity.translatesAutoresizingMaskIntoConstraints = NO;
+    self.statusActivity.color = UIColor.secondaryLabelColor;
+    [self.statusActivity startAnimating];
+
+    UIStackView *statusStack = [[UIStackView alloc]
+        initWithArrangedSubviews:@[self.statusActivity, self.displayStatusLabel]];
+    statusStack.translatesAutoresizingMaskIntoConstraints = NO;
+    statusStack.axis = UILayoutConstraintAxisHorizontal;
+    statusStack.alignment = UIStackViewAlignmentCenter;
+    statusStack.spacing = 9.0;
+    statusStack.layoutMargins = UIEdgeInsetsMake(9.0, 14.0, 9.0, 14.0);
+    statusStack.layoutMarginsRelativeArrangement = YES;
+    [self.statusPill.contentView addSubview:statusStack];
 
     UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark];
     self.controlBar = [[UIVisualEffectView alloc] initWithEffect:blur];
@@ -112,10 +146,14 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
         [self.framebufferView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         [self.framebufferView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
         [self.framebufferView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
-        [self.displayStatusLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
-        [self.displayStatusLabel.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
-        [self.displayStatusLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor constant:24.0],
-        [self.displayStatusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:safe.trailingAnchor constant:-24.0],
+        [self.statusPill.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [self.statusPill.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [self.statusPill.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor constant:24.0],
+        [self.statusPill.trailingAnchor constraintLessThanOrEqualToAnchor:safe.trailingAnchor constant:-24.0],
+        [statusStack.leadingAnchor constraintEqualToAnchor:self.statusPill.contentView.leadingAnchor],
+        [statusStack.trailingAnchor constraintEqualToAnchor:self.statusPill.contentView.trailingAnchor],
+        [statusStack.topAnchor constraintEqualToAnchor:self.statusPill.contentView.topAnchor],
+        [statusStack.bottomAnchor constraintEqualToAnchor:self.statusPill.contentView.bottomAnchor],
         [self.controlBar.topAnchor constraintEqualToAnchor:safe.topAnchor constant:10.0],
         [self.controlBar.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-12.0],
         [controls.leadingAnchor constraintEqualToAnchor:self.controlBar.contentView.leadingAnchor constant:4.0],
@@ -203,14 +241,16 @@ typedef NS_ENUM(NSInteger, VSHiftButtonStyle) {
 - (void)updateFramebufferImage:(UIImage *)image {
     dispatch_async(dispatch_get_main_queue(), ^{
         self.framebufferView.image = image;
-        self.displayStatusLabel.hidden = image != nil;
+        self.statusPill.hidden = image != nil;
+        if (image != nil) [self.statusActivity stopAnimating];
     });
 }
 
 - (void)updateDisplayStatus:(NSString *)status {
     dispatch_async(dispatch_get_main_queue(), ^{
         self.displayStatusLabel.text = status;
-        self.displayStatusLabel.hidden = NO;
+        self.statusPill.hidden = NO;
+        [self.statusActivity startAnimating];
     });
 }
 
@@ -1401,7 +1441,10 @@ static std::uint64_t ReadU64BE(const std::uint8_t *bytes) {
 - (UIInterfaceOrientationMask)application:(UIApplication *)application
         supportedInterfaceOrientationsForWindow:(UIWindow *)window {
     (void)application;
-    UIViewController *presented = window.rootViewController.presentedViewController;
+    UIViewController *presented = window.rootViewController;
+    while (presented.presentedViewController != nil) {
+        presented = presented.presentedViewController;
+    }
     if ([presented isKindOfClass:VSHiftDisplayViewController.class]) {
         return UIInterfaceOrientationMaskLandscape;
     }

@@ -10,6 +10,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(VSHIFT_BUILD_TESTS "Build host-side tests" ON)
 option(VSHIFT_BUILD_IOS "Build the iOS application target" OFF)
+option(VSHIFT_BUILD_RPCS3_CORE "Build the pinned, intact RPCS3 emulator core" OFF)
+
+if(VSHIFT_BUILD_RPCS3_CORE)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rpcs3_core.cmake)
+endif()
 
 add_library(vshift_core STATIC
     core/crypto/aes.cpp
@@ -78,6 +83,24 @@ target_link_libraries(vshift_ps3_core PUBLIC
     vshift_core_api
     vshift_platform
 )
+
+add_executable(vshift_ps3_firmware_extract
+    tools/ps3_firmware_extract.cpp
+)
+target_link_libraries(vshift_ps3_firmware_extract PRIVATE vshift_ps3_core)
+if(VSHIFT_BUILD_RPCS3_CORE)
+    target_link_libraries(vshift_ps3_firmware_extract PRIVATE vshift_rpcs3_core)
+    target_compile_definitions(vshift_ps3_firmware_extract PRIVATE VSHIFT_HAVE_RPCS3_DECRYPT=1)
+endif()
+
+if(VSHIFT_BUILD_RPCS3_CORE)
+    add_executable(vshift_rpcs3_boot_probe
+        tools/rpcs3_boot_probe.cpp
+    )
+    target_link_libraries(vshift_rpcs3_boot_probe PRIVATE
+        vshift_rpcs3_core
+    )
+endif()
 
 if(VSHIFT_BUILD_TESTS)
     enable_testing()
@@ -276,6 +299,8 @@ if(VSHIFT_BUILD_IOS)
         MACOSX_BUNDLE_BUNDLE_NAME VSHiftJITProbe
         XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS
             "${CMAKE_CURRENT_SOURCE_DIR}/app/ios/VSHiftJITProbe.entitlements"
+        MACOSX_BUNDLE_INFO_PLIST
+            "${CMAKE_CURRENT_SOURCE_DIR}/app/ios/Info.plist"
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
         XCODE_ATTRIBUTE_UIRequiresFullScreen "YES"
         XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "15.0"

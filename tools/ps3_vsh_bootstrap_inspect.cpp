@@ -31,12 +31,13 @@ bool ReadAt(std::ifstream& file,
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2 && argc != 4) {
-        std::cerr << "usage: vshift_ps3_vsh_bootstrap_inspect PS3UPDAT.PUP [--dump-vsh path]\n";
+    if (argc != 2 && argc != 3 && argc != 4) {
+        std::cerr << "usage: vshift_ps3_vsh_bootstrap_inspect PS3UPDAT.PUP [--inspect-vsh|--dump-vsh path]\n";
         return 2;
     }
+    const bool inspect_vsh = argc == 3 && std::string(argv[2]) == "--inspect-vsh";
     const bool dump_vsh = argc == 4 && std::string(argv[2]) == "--dump-vsh";
-    if (argc == 4 && !dump_vsh) {
+    if ((argc == 3 && !inspect_vsh) || (argc == 4 && !dump_vsh)) {
         std::cerr << "unknown option\n";
         return 2;
     }
@@ -179,6 +180,190 @@ int main(int argc, char** argv) {
         std::cerr << "PS3 SELF parse failed: " << self.error << '\n';
         return 1;
     }
+    if (inspect_vsh) {
+        std::cout << "VSH program headers\n";
+        for (std::size_t index = 0; index < self.image.program_headers.size(); ++index) {
+            const auto& header = self.image.program_headers[index];
+            std::cout << "  #" << index << " type=0x" << std::hex << header.type
+                      << " flags=0x" << header.flags
+                      << " offset=0x" << header.offset
+                      << " va=0x" << header.virtual_address
+                      << " pa=0x" << header.physical_address
+                      << " file=0x" << header.file_size
+                      << " mem=0x" << header.memory_size << std::dec << '\n';
+            const auto raw_offset = self.image.extension.program_header_offset +
+                                    index * (self.image.elf_class == 2 ? 0x38ull : 0x20ull);
+            if (raw_offset + (self.image.elf_class == 2 ? 0x38ull : 0x20ull) <=
+                vsh_bytes.size()) {
+                std::cout << "    raw:";
+                const auto raw_size = self.image.elf_class == 2 ? 0x38u : 0x20u;
+                for (std::size_t offset = 0; offset < raw_size; ++offset) {
+                    if ((offset % 4) == 0) std::cout << ' ';
+                    std::cout << std::hex << static_cast<unsigned>(
+                        vsh_bytes[static_cast<std::size_t>(raw_offset + offset)]);
+                }
+                std::cout << std::dec << '\n';
+            }
+            const auto section = std::find_if(
+                self.image.sections.begin(), self.image.sections.end(),
+                [index](const auto& candidate) {
+                    return candidate.type == 2 && candidate.program_index == index;
+                });
+            if (section == self.image.sections.end() || section->bytes.empty()) continue;
+            const auto limit = std::min<std::size_t>(section->bytes.size(), 0x40);
+            std::cout << "    bytes:";
+            for (std::size_t offset = 0; offset < limit; ++offset) {
+                if ((offset % 4) == 0) std::cout << ' ';
+                std::cout << std::hex << static_cast<unsigned>(section->bytes[offset]);
+            }
+            std::cout << std::dec << '\n';
+        }
+        const auto mapped_segment = std::find_if(
+            self.image.program_headers.begin(), self.image.program_headers.end(),
+            [](const auto& header) {
+                return header.type == 1 && header.virtual_address == 0x6c0000;
+            });
+        if (mapped_segment != self.image.program_headers.end()) {
+            const auto mapped_index = static_cast<std::size_t>(std::distance(
+                self.image.program_headers.begin(), mapped_segment));
+            const auto section = std::find_if(
+                self.image.sections.begin(), self.image.sections.end(),
+                [mapped_index](const auto& candidate) {
+                    return candidate.type == 2 && candidate.program_index == mapped_index;
+                });
+            if (section != self.image.sections.end() && section->bytes.size() > 0x15aa0) {
+                std::cout << "VSH data at 0x6d5a80:";
+                for (std::size_t offset = 0x15a80; offset < 0x15ac0; offset += 8) {
+                    std::uint64_t value = 0;
+                    for (std::size_t byte = 0; byte < 8; ++byte) {
+                        value = (value << 8) | section->bytes[offset + byte];
+                    }
+                    std::cout << " 0x" << std::hex << value;
+                }
+                std::cout << std::dec << '\n';
+            }
+        }
+        vshift::memory::GuestMemory inspect_memory;
+        const auto inspect_loaded = vshift::loader::LoadPs3SelfIntoMemory(
+            self.image, inspect_memory);
+        if (inspect_loaded.ok()) {
+            const auto read_u32 = [&](std::uint64_t address,
+                                      std::uint32_t& value) {
+                std::array<std::uint8_t, 4> bytes{};
+                if (!inspect_memory.Read(address, bytes).ok()) return false;
+                value = (static_cast<std::uint32_t>(bytes[0]) << 24) |
+                        (static_cast<std::uint32_t>(bytes[1]) << 16) |
+                        (static_cast<std::uint32_t>(bytes[2]) << 8) | bytes[3];
+                return true;
+            };
+            for (const auto address : {0x367b80u, 0x367ba0u, 0x367bc0u,
+                                       0x367be0u, 0x367bfcu, 0x617000u,
+                                       0x61701cu}) {
+                std::cout << "guest bytes at 0x" << std::hex << address << ":";
+                for (std::size_t offset = 0; offset < 32; offset += 4) {
+                    std::uint32_t value = 0;
+                    if (!read_u32(address + offset, value)) break;
+                    std::cout << " 0x" << value;
+                }
+                std::cout << std::dec << '\n';
+            }
+            std::size_t pointer_hits = 0;
+            for (std::size_t program_index = 0;
+                 program_index < self.image.program_headers.size();
+                 ++program_index) {
+                const auto& program = self.image.program_headers[program_index];
+                if (program.type != 1 || program.file_size < 4) continue;
+                const auto section = std::find_if(
+                    self.image.sections.begin(), self.image.sections.end(),
+                    [program_index](const auto& candidate) {
+                        return candidate.type == 2 &&
+                               candidate.program_index == program_index;
+                    });
+                if (section == self.image.sections.end() ||
+                    section->bytes.size() < program.file_size) continue;
+                for (std::uint64_t offset = 0; offset + 4 <= program.file_size;
+                     offset += 4) {
+                    const auto bytes = std::span<const std::uint8_t>(section->bytes)
+                        .subspan(static_cast<std::size_t>(offset), 4);
+                    const auto value = (static_cast<std::uint32_t>(bytes[0]) << 24) |
+                                       (static_cast<std::uint32_t>(bytes[1]) << 16) |
+                                       (static_cast<std::uint32_t>(bytes[2]) << 8) |
+                                       bytes[3];
+                    if (value != 0x367bfcu) continue;
+                    std::cout << "pointer 0x367bfc at guest 0x" << std::hex
+                              << (program.virtual_address + offset) << std::dec << '\n';
+                    if (++pointer_hits >= 32) break;
+                }
+                if (pointer_hits >= 32) break;
+            }
+            const auto read_string = [&](std::uint64_t address) {
+                std::string value;
+                for (std::size_t index = 0; index < 64; ++index) {
+                    std::uint32_t word = 0;
+                    const auto byte_address = address + index;
+                    std::array<std::uint8_t, 1> byte{};
+                    if (!inspect_memory.Read(byte_address, byte).ok() || byte[0] == 0) break;
+                    value.push_back(static_cast<char>(byte[0]));
+                }
+                return value;
+            };
+            std::cout << "VSH process-info candidates\n";
+            for (const auto address : {0x1008cull, 0x101dcull, 0x6ec840ull,
+                                       0x6ec844ull, 0x6ec848ull, 0x6ec84cull,
+                                       0x6ec850ull, 0x6ec854ull}) {
+                std::uint32_t value = 0;
+                if (!read_u32(address, value)) continue;
+                std::cout << "  [0x" << std::hex << address << "] = 0x" << value;
+                std::uint32_t pointed = 0;
+                if (read_u32(value, pointed)) {
+                    std::cout << " -> 0x" << pointed;
+                }
+                std::cout << std::dec << '\n';
+            }
+            for (const auto address : {0x6c0984ull, 0x6c0988ull, 0x6c098cull,
+                                       0x6c0990ull, 0x6c0994ull, 0x6c0998ull,
+                                       0x6c099cull}) {
+                std::uint32_t value = 0;
+                if (!read_u32(address, value)) continue;
+                std::cout << "  [0x" << std::hex << address << "] = 0x" << value
+                          << std::dec << '\n';
+            }
+            std::cout << "candidate import records:" << '\n';
+            for (const auto range : {std::pair<std::uint64_t, std::uint64_t>{0x10000, 0x6bbea8},
+                                     {0x6c0000, 0x6f5558}}) {
+                for (auto address = range.first; address + 0x2c <= range.second;
+                     address += 4) {
+                    std::uint32_t value = 0;
+                    if (!read_u32(address, value) || value != 0x2c000001u) continue;
+                    std::uint32_t name = 0;
+                    std::uint32_t nids = 0;
+                    std::uint32_t addrs = 0;
+                    std::uint32_t counts = 0;
+                    read_u32(address + 0x10, name);
+                    read_u32(address + 0x14, nids);
+                    read_u32(address + 0x18, addrs);
+                    read_u32(address + 0x08, counts);
+                    const auto function_count = (counts >> 16) & 0xffffu;
+                    const auto variable_count = counts & 0xffffu;
+                    std::cout << "  record 0x" << std::hex << address
+                              << " name=0x" << name << " (" << read_string(name)
+                              << ") nids=0x" << nids << " addrs=0x" << addrs
+                              << " funcs=" << std::dec << function_count
+                              << " vars=" << variable_count << '\n';
+                    for (std::uint32_t index = 0; index < function_count && index < 3;
+                         ++index) {
+                        std::uint32_t nid = 0;
+                        std::uint32_t addr_value = 0;
+                        read_u32(nids + index * 4, nid);
+                        read_u32(addrs + index * 4, addr_value);
+                        std::cout << "    fn[" << index << "] nid=0x" << std::hex << nid
+                                  << " addr=0x" << addr_value << std::dec << '\n';
+                    }
+                }
+            }
+        }
+        return 0;
+    }
     vshift::memory::GuestMemory memory;
     const auto loaded = vshift::loader::LoadPs3SelfIntoMemory(
         self.image, memory);
@@ -236,9 +421,9 @@ int main(int argc, char** argv) {
             for (const auto byte : bytes) {
                 std::cout << ' ' << static_cast<unsigned>(byte);
             }
-            std::cout << std::dec << '\n';
+                std::cout << std::dec << '\n';
+            }
         }
-    }
     const auto stack_map = memory.Map({
         0x0c000000, 0x01000000,
         vshift::memory::kPermissionRead | vshift::memory::kPermissionWrite});
