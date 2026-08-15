@@ -804,13 +804,23 @@ int main(int argc, char** argv) {
 				i / 10, static_cast<int>(Emu.GetStatus(false)),
 				static_cast<unsigned long long>(g_flip_count.load()));
 			idm::select<named_thread<ppu_thread>>([](u32 id, named_thread<ppu_thread>& thread) {
-				std::fprintf(stderr, "VSHIFT_BOOT ppu id=0x%x cia=0x%x exec_bytes=%llu state=0x%x stopped=%s func=%s\n",
-					id, thread.cia, static_cast<unsigned long long>(thread.exec_bytes),
+				std::fprintf(stderr, "VSHIFT_BOOT ppu id=0x%x name=%s module=%s cia=0x%x exec_bytes=%llu state=0x%x stopped=%s func=%s last=%s\n",
+					id, thread.get_name().c_str(), thread.current_module ? thread.current_module : "-", thread.cia,
+					static_cast<unsigned long long>(thread.exec_bytes),
 					static_cast<unsigned>(thread.state.load()),
-					thread.is_stopped() ? "true" : "false", thread.current_function ? thread.current_function : "-");
+					thread.is_stopped() ? "true" : "false", thread.current_function ? thread.current_function : "-",
+					thread.last_function ? thread.last_function : "-");
+				if (std::getenv("VSHIFT_TRACE_STACK") && id == ppu_thread::id_base)
+				{
+					const std::string stack = thread.dump_callstack();
+					std::fprintf(stderr, "VSHIFT_BOOT main_stack_begin name=%s\n%sVSHIFT_BOOT main_stack_end\n",
+						thread.get_name().c_str(), stack.c_str());
+				}
 			});
 			if (auto* render = rsx::get_current_renderer(); render && render->ctrl)
-				std::fprintf(stderr, "VSHIFT_BOOT rsx get=0x%x put=0x%x ref=0x%x\n", +render->ctrl->get, +render->ctrl->put, +render->ctrl->ref);
+				std::fprintf(stderr, "VSHIFT_BOOT rsx init=%s buffers=%u get=0x%x put=0x%x ref=0x%x\n",
+					render->is_initialized ? "true" : "false", render->display_buffers_count,
+					+render->ctrl->get, +render->ctrl->put, +render->ctrl->ref);
 		}
 	}
     std::cout << "state_after_" << wait_seconds << "s"
@@ -823,11 +833,12 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "VSHIFT_RSX_FINAL_CTRL get=0x%x put=0x%x ref=0x%x\n",
             +render->ctrl->get, +render->ctrl->put, +render->ctrl->ref);
     }
-    idm::select<named_thread<ppu_thread>>([](u32 id, named_thread<ppu_thread>& thread) {
-        std::fprintf(stderr, "VSHIFT_PPU_THREAD id=0x%x cia=0x%x exec_bytes=%llu stopped=%s func=%s\n",
-            id, thread.cia, static_cast<unsigned long long>(thread.exec_bytes),
-            thread.is_stopped() ? "true" : "false", thread.current_function ? thread.current_function : "-");
-    });
+	idm::select<named_thread<ppu_thread>>([](u32 id, named_thread<ppu_thread>& thread) {
+		std::fprintf(stderr, "VSHIFT_PPU_THREAD id=0x%x name=%s module=%s cia=0x%x exec_bytes=%llu stopped=%s func=%s last=%s\n",
+			id, thread.get_name().c_str(), thread.current_module ? thread.current_module : "-", thread.cia, static_cast<unsigned long long>(thread.exec_bytes),
+			thread.is_stopped() ? "true" : "false", thread.current_function ? thread.current_function : "-",
+			thread.last_function ? thread.last_function : "-");
+	});
 	if (interactive)
 	{
 		Emu.GracefulShutdown(false);

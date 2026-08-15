@@ -12,6 +12,8 @@ param(
     [switch] $TraceFs,
     [switch] $TraceAv,
     [switch] $TraceThreads,
+    [switch] $TraceStack,
+    [string] $LogPath,
     [switch] $Interactive
 )
 
@@ -65,6 +67,11 @@ if ($TraceThreads) {
 } else {
     Remove-Item Env:VSHIFT_TRACE_THREADS -ErrorAction SilentlyContinue
 }
+if ($TraceStack) {
+    $env:VSHIFT_TRACE_STACK = '1'
+} else {
+    Remove-Item Env:VSHIFT_TRACE_STACK -ErrorAction SilentlyContinue
+}
 if ($Interactive) {
     $env:VSHIFT_INTERACTIVE = '1'
 } else {
@@ -73,6 +80,15 @@ if ($Interactive) {
 
 $rendererArg = if ($Renderer -eq 'vulkan') { '--vulkan' } else { '--gl' }
 Write-Host "VSHift live probe: $DevFlash ($Renderer, ${Seconds}s)"
-Write-Host 'Логи ниже выводятся напрямую; окно закрывается по таймеру или WM_CLOSE.'
-& $probe $DevFlash $rendererArg
+if ($LogPath) {
+    $logDirectory = Split-Path -Parent $LogPath
+    if ($logDirectory) {
+        New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+    }
+    Write-Host "Логи выводятся в реальном времени и сохраняются: $LogPath"
+    & $probe $DevFlash $rendererArg 2>&1 | Tee-Object -FilePath $LogPath
+} else {
+    Write-Host 'Логи ниже выводятся напрямую; окно закрывается по таймеру или WM_CLOSE.'
+    & $probe $DevFlash $rendererArg
+}
 exit $LASTEXITCODE
