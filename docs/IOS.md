@@ -1,5 +1,23 @@
 # iOS build and device testing
 
+## GitHub Actions jobs
+
+The `CI` workflow contains independent simulator and device jobs. Both jobs
+recursively check out the RPCS3 submodule and apply the existing iOS libusb
+patch at build time. The device job packages an unsigned arm64 IPA and both
+jobs upload checkout/Xcode diagnostics even when a build step fails.
+
+Artifacts:
+
+- `vshift-ios-simulator` — unsigned arm64 simulator `.app`.
+- `vshift-ios-device-unsigned-ipa` — unsigned arm64 IPA for local signing.
+- `vshift-ios-simulator-diagnostics` and `vshift-ios-device-diagnostics` —
+  submodule revisions and Xcode version.
+
+Actions cannot verify physical-device installation, JIT activation,
+Metal/MoltenVK presentation, or PS3 VSH execution. Those checks remain
+unverified until the IPA is signed, installed, and launched on an iPhone.
+
 GitHub Actions builds an unsigned iOS simulator bundle and an unsigned
 arm64 device IPA. The hosted macOS runner cannot access a developer's physical
 iPhone, so signing, installation, and JIT activation happen on the user's

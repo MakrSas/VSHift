@@ -24,6 +24,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+      - name: Verify RPCS3 submodule
+        shell: bash
+        run: |
+          test -f third_party/rpcs3/CMakeLists.txt
+          git -C third_party/rpcs3 rev-parse HEAD
       - name: Apply iOS RPCS3 platform patch
         run: git -C third_party/rpcs3 apply --whitespace=nowarn cmake/patches/rpcs3-ios-libusb.patch
       - name: Configure Xcode project
@@ -42,11 +48,28 @@ jobs:
           --target vshift_ios_jit_probe
           --
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+      - name: Verify simulator bundle
+        shell: bash
+        run: test -d build-ios/Release-iphonesimulator/vshift_ios_jit_probe.app
       - name: Upload simulator bundle
         uses: actions/upload-artifact@v4
         with:
           name: vshift-ios-simulator
           path: build-ios/Release-iphonesimulator/vshift_ios_jit_probe.app
+      - name: Collect simulator diagnostics
+        if: always()
+        shell: bash
+        run: |
+          git submodule status --recursive > simulator-submodules.txt
+          xcodebuild -version > simulator-xcode-version.txt 2>&1 || true
+      - name: Upload simulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vshift-ios-simulator-diagnostics
+          path: |
+            simulator-submodules.txt
+            simulator-xcode-version.txt
 
   ios-device-unsigned:
     name: iOS device unsigned IPA
@@ -55,6 +78,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+      - name: Verify RPCS3 submodule
+        shell: bash
+        run: |
+          test -f third_party/rpcs3/CMakeLists.txt
+          git -C third_party/rpcs3 rev-parse HEAD
       - name: Apply iOS RPCS3 platform patch
         run: git -C third_party/rpcs3 apply --whitespace=nowarn cmake/patches/rpcs3-ios-libusb.patch
       - name: Configure device project
@@ -74,12 +103,29 @@ jobs:
           --
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
       - name: Package unsigned IPA
+        shell: bash
         run: |
+          test -d build-device/Release-iphoneos/vshift_ios_jit_probe.app
           mkdir -p ipa/Payload
           cp -R build-device/Release-iphoneos/vshift_ios_jit_probe.app ipa/Payload/VSHiftJITProbe.app
           (cd ipa && zip -qry ../VSHiftJITProbe-unsigned.ipa Payload)
+          test -s VSHiftJITProbe-unsigned.ipa
       - name: Upload device IPA
         uses: actions/upload-artifact@v4
         with:
           name: vshift-ios-device-unsigned-ipa
           path: VSHiftJITProbe-unsigned.ipa
+      - name: Collect device diagnostics
+        if: always()
+        shell: bash
+        run: |
+          git submodule status --recursive > device-submodules.txt
+          xcodebuild -version > device-xcode-version.txt 2>&1 || true
+      - name: Upload device diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vshift-ios-device-diagnostics
+          path: |
+            device-submodules.txt
+            device-xcode-version.txt
