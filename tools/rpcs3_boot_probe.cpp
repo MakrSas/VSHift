@@ -88,6 +88,7 @@ namespace
 	std::atomic<u64> g_flip_count{0};
 	std::atomic<u32> g_main_task_trace_count{0};
 	std::atomic_bool g_frame_captured{false};
+	std::atomic_bool g_window_closed{false};
 	std::filesystem::path g_frame_path;
 	bool g_use_gl = false;
 	bool g_use_vulkan = false;
@@ -125,6 +126,16 @@ namespace
 
 		static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 		{
+			if (message == WM_CLOSE)
+			{
+				DestroyWindow(window);
+				return 0;
+			}
+			if (message == WM_DESTROY)
+			{
+				PostQuitMessage(0);
+				return 0;
+			}
 			return DefWindowProcA(window, message, wparam, lparam);
 		}
 
@@ -141,8 +152,11 @@ namespace
 				RegisterClassA(&klass);
 			});
 
-			m_window = CreateWindowExA(0, class_name, "VSHift PS3", WS_POPUP,
-				0, 0, 1280, 720, nullptr, nullptr, GetModuleHandleA(nullptr), nullptr);
+			const bool fullscreen = std::getenv("VSHIFT_FULLSCREEN") || std::getenv("VSHIFT_INTERACTIVE");
+			const int width = fullscreen ? GetSystemMetrics(SM_CXSCREEN) : 1280;
+			const int height = fullscreen ? GetSystemMetrics(SM_CYSCREEN) : 720;
+			m_window = CreateWindowExA(0, class_name, "VSHift PS3", WS_POPUP | WS_VISIBLE,
+				0, 0, width, height, nullptr, nullptr, GetModuleHandleA(nullptr), nullptr);
 			if (!m_window)
 				throw std::runtime_error("CreateWindowExA failed");
 			std::fprintf(stderr, "VSHIFT_GL_FRAME window=%p\n", static_cast<void*>(m_window));
@@ -181,6 +195,11 @@ namespace
 				wglDeleteContext(bootstrap);
 
 			wglMakeCurrent(nullptr, nullptr);
+			if (fullscreen)
+			{
+				SetWindowPos(m_window, HWND_TOP, 0, 0, width, height,
+					SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+			}
 			ShowWindow(m_window, SW_SHOW);
 			UpdateWindow(m_window);
 			std::fprintf(stderr, "VSHIFT_GL_FRAME context=%p\n", static_cast<void*>(m_context));
@@ -227,8 +246,16 @@ namespace
 			glFlush();
 			SwapBuffers(m_device);
 		}
-		int client_width() override { return 1280; }
-		int client_height() override { return 720; }
+		int client_width() override
+		{
+			RECT rect{};
+			return m_window && GetClientRect(m_window, &rect) ? rect.right - rect.left : 1280;
+		}
+		int client_height() override
+		{
+			RECT rect{};
+			return m_window && GetClientRect(m_window, &rect) ? rect.bottom - rect.top : 720;
+		}
 		f64 client_display_rate() override { return 60.; }
 		bool has_alpha() override { return false; }
 		display_handle_t handle() const override { return m_window; }
@@ -378,7 +405,10 @@ namespace
 		while (PeekMessageA(&message, nullptr, 0, 0, PM_REMOVE))
 		{
 			if (message.message == WM_QUIT)
+			{
+				g_window_closed.store(true);
 				continue;
+			}
 			TranslateMessage(&message);
 			DispatchMessageA(&message);
 		}
@@ -719,10 +749,13 @@ int main(int argc, char** argv) {
     const int wait_seconds = use_window
         ? (std::getenv("VSHIFT_GL_WAIT_SECONDS") ? std::max(1, std::atoi(std::getenv("VSHIFT_GL_WAIT_SECONDS"))) : 60)
         : 10;
-    const int wait_iterations = wait_seconds * 10;
-    bool finalized_start = false;
-    for (int i = 0; i < wait_iterations; ++i) {
+	const bool interactive = std::getenv("VSHIFT_INTERACTIVE") != nullptr;
+	const int wait_iterations = wait_seconds * 10;
+	bool finalized_start = false;
+	for (int i = 0; interactive || i < wait_iterations; ++i) {
 		pump_window_messages();
+		if (interactive && g_window_closed.load())
+			break;
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		pump_window_messages();
 		pump_main_tasks();
@@ -752,6 +785,12 @@ int main(int argc, char** argv) {
             id, thread.cia, static_cast<unsigned long long>(thread.exec_bytes),
             thread.is_stopped() ? "true" : "false", thread.current_function ? thread.current_function : "-");
     });
+	if (interactive)
+	{
+		Emu.GracefulShutdown(false);
+		Emu.CleanUp();
+		return 0;
+	}
 #ifdef _WIN32
     // The probe is intentionally a one-shot boot measurement. RPCS3's normal
     // GUI host owns shutdown on its main event loop; do not tear down that
